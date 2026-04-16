@@ -1,0 +1,141 @@
+/*
+ * VertexAgent – Theme Tokens
+ *
+ * All visual colors are expressed as CSS custom-properties so that
+ * switching between light / dark (or any future custom theme) only
+ * requires swapping values on the root element.
+ *
+ * The active theme is set via a `data-theme` attribute on <html>:
+ *   <html data-theme="dark">   → dark palette
+ *   <html data-theme="light">  → light palette
+ *
+ * To add a custom theme later, duplicate one of the blocks below
+ * and adjust the variable values.
+ */
+
+/* ─── Dark theme (default) ────────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  /* Page */
+  --color-bg:              #0c0c18;
+  --color-text:            #e0e0e0;
+  --color-text-secondary:  #888;
+  --color-text-tertiary:   #666;
+  --color-text-quaternary: #555;
+  --color-text-heading:    #c0c0e0;
+  --color-text-content:    #d0d0d0;
+
+  /* Surfaces */
+  --color-surface:         #111122;
+  --color-surface-alt:     #16162a;
+  --color-surface-deep:    #0a0a16;
+  --color-surface-modal:   #111122;
+
+  /* Borders */
+  --color-border:          #1e1e38;
+  --color-border-subtle:   #2a2a4a;
+  --color-border-focus:    #5a5a9a;
+
+  /* Buttons / accents */
+  --color-primary:         #4a4a8a;
+  --color-primary-hover:   #6a6aaa;
+  --color-accent:          #2a2a50;
+  --color-accent-hover:    #3a3a6a;
+
+  /* Avatars */
+  --color-avatar-user-bg:  #2a5a2a;
+  --color-avatar-user-fg:  #c0e0c0;
+  --color-avatar-ai-bg:    #2a2a5a;
+  --color-avatar-ai-fg:    #c0c0e0;
+
+  /* Settings nav */
+  --color-nav-active:      #1a1a38;
+  --color-nav-hover:       #14142a;
+
+  /* Thinking block */
+  --color-thinking-bg:     #14142a;
+  --color-thinking-text:   #a0a0c0;
+  --color-thinking-content-bg: #111122;
+  --color-thinking-content-text: #999;
+
+  /* Misc */
+  --color-error:           #e06060;
+  --color-error-hover:     #ff4040;
+  --color-hint:            #3a3a4a;
+  --color-loading:         #7a7aaa;
+  --color-overlay:         rgba(0, 0, 0, 0.7);
+  --color-shadow:          rgba(0, 0, 0, 0.6);
+  --color-input-placeholder: #444;
+
+  /* Scrollbar (optional) */
+  --color-scrollbar-thumb: #2a2a4a;
+  --color-scrollbar-track: transparent;
+
+  /* Offline banner */
+  --color-warning-bg:     #332b00;
+  --color-warning-text:   #ffd666;
+  --color-warning-border: #554400;
+}
+
+/* ─── Light theme ─────────────────────────────────────────────── */
+[data-theme="light"] {
+  /* Page */
+  --color-bg:              #f5f5f7;
+  --color-text:            #1d1d1f;
+  --color-text-secondary:  #6e6e73;
+  --color-text-tertiary:   #86868b;
+  --color-text-quaternary: #aeaeb2;
+  --color-text-heading:    #1d1d1f;
+  --color-text-content:    #3a3a3c;
+
+  /* Surfaces */
+  --color-surface:         #ffffff;
+  --color-surface-alt:     #f2f2f7;
+  --color-surface-deep:    #e5e5ea;
+  --color-surface-modal:   #ffffff;
+
+  /* Borders */
+  --color-border:          #d1d1d6;
+  --color-border-subtle:   #c7c7cc;
+  --color-border-focus:    #5856d6;
+
+  /* Buttons / accents */
+  --color-primary:         #5856d6;
+  --color-primary-hover:   #4340b0;
+  --color-accent:          #e8e8f0;
+  --color-accent-hover:    #d1d1e0;
+
+  /* Avatars */
+  --color-avatar-user-bg:  #34c759;
+  --color-avatar-user-fg:  #ffffff;
+  --color-avatar-ai-bg:    #5856d6;
+  --color-avatar-ai-fg:    #ffffff;
+
+  /* Settings nav */
+  --color-nav-active:      #e8e8f0;
+  --color-nav-hover:       #f2f2f7;
+
+  /* Thinking block */
+  --color-thinking-bg:     #f2f2f7;
+  --color-thinking-text:   #6e6e73;
+  --color-thinking-content-bg: #f8f8fa;
+  --color-thinking-content-text: #6e6e73;
+
+  /* Misc */
+  --color-error:           #ff3b30;
+  --color-error-hover:     #d63027;
+  --color-hint:            #aeaeb2;
+  --color-loading:         #8e8e93;
+  --color-overlay:         rgba(0, 0, 0, 0.3);
+  --color-shadow:          rgba(0, 0, 0, 0.15);
+  --color-input-placeholder: #aeaeb2;
+
+  /* Scrollbar (optional) */
+  --color-scrollbar-thumb: #c7c7cc;
+  --color-scrollbar-track: transparent;
+
+  /* Offline banner */
+  --color-warning-bg:     #fff3cd;
+  --color-warning-text:   #856404;
+  --color-warning-border: #ffc107;
+}

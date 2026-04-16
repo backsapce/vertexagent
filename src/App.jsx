@@ -1,0 +1,582 @@
+import { useState, useCallback, useEffect, useRef } from 'react';
+import ChatList from './components/ChatList/ChatList';
+import MessagePanel from './components/MessagePanel/MessagePanel';
+import FileManage from './components/FileManage/FileManage';
+import { loadChats, saveChats, clearAll, deleteChat as deleteChatFile } from './vfs/opfs';
+import config from './config/config';
+import llm from './models/llm';
+import { checkAgentAvailable, executeCommand } from './models/agent';
+import { I18nProvider } from './i18n/index';
+import { useI18n } from './i18n/context';
+import { WifiOff } from './components/Icons/Icons';
+import './App.css';
+
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+const AGENT_SYSTEM_PROMPT = `You have access to an "execute" tool that can run shell commands on the user's machine.
+To use it, output a command wrapped in XML tags like this:
+<execute>command here</execute>
+
+For example:
+<execute>ls -la</execute>
+<execute>cat package.json</execute>
+
+Rules:
+- You can use multiple <execute> blocks in a single response.
+- After each command is executed, you will receive the stdout, stderr, and exit code.
+- Use this tool to help users with tasks that require running commands.
+- Always explain what you're doing before and after executing commands.
+- Be careful with destructive commands — confirm with the user first.`;
+
+const EXECUTE_REGEX = /<execute>(.*?)<\/execute>/gs;
+
+function parseExecuteBlocks(text) {
+  const blocks = [];
+  let match;
+  EXECUTE_REGEX.lastIndex = 0;
+  while ((match = EXECUTE_REGEX.exec(text)) !== null) {
+    blocks.push({ cmd: match[1].trim(), fullMatch: match[0], index: match.index });
+  }
+  return blocks;
+}
+
+function OfflineBanner() {
+  const { t } = useI18n();
+  return (
+    <div className="offline-banner">
+      <WifiOff width={16} height={16} />
+      <span>{t('offline.banner')}</span>
+    </div>
+  );
+}
+
+function App() {
+  const [chats, setChats] = useState([]);
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [_llmReady, setLlmReady] = useState(false); // triggers re-render on config change
+  const [streaming, setStreaming] = useState(false);
+  const [theme, setTheme] = useState('system'); // 'light' | 'dark' | 'system'
+  const [localePref, setLocalePref] = useState('auto'); // persisted language preference
+  const [agents, setAgents] = useState([]); // [{url, name, status:'connected'|'disconnected'}]
+  const [selectedAgentUrl, setSelectedAgentUrl] = useState(null); // url of active agent or null
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [showFileManage, setShowFileManage] = useState(false);
+  const [fileManageWidth, setFileManageWidth] = useState(320);
+  const [nickname, setNickname] = useState('');
+  const savePending = useRef(null);
+  const abortRef = useRef(null);
+  const streamingContentRef = useRef('');  // accumulates chunks outside React state
+  const streamingThinkingRef = useRef(''); // accumulates thinking/reasoning chunks
+  const rafRef = useRef(null);            // requestAnimationFrame id for UI sync
+  const selectedAgentRef = useRef(null); // avoid stale closure
+
+  // Load config, chats and LLM settings from OPFS on mount
+  useEffect(() => {
+    config.init()
+      .then(() => {
+        // Restore persisted theme preference
+        const saved = config.get('theme');
+        if (saved && ['light', 'dark', 'system'].includes(saved)) {
+          setTheme(saved);
+        }
+        // Restore persisted language preference
+        const savedLocale = config.get('locale');
+        if (savedLocale) setLocalePref(savedLocale);
+        // Restore persisted nickname
+        const savedNickname = config.get('general.nickname');
+        if (savedNickname) setNickname(savedNickname);
+        return Promise.all([
+          loadChats()
+            .then((saved) => { if (saved.length) setChats(saved); })
+            .catch((err) => console.warn('OPFS load failed:', err)),
+          llm.init()
+            .then(() => setLlmReady(true))
+            .catch((err) => console.warn('LLM init failed:', err)),
+        ]);
+      })
+      .catch((err) => console.warn('Config init failed:', err))
+      .finally(() => setLoaded(true));
+
+    // Load saved agents from config, auto-detect local agent
+    // (config.init() above must resolve first, but we await it indirectly)
+    (async () => {
+      // Wait until config is initialized
+      while (!config.initialized) await new Promise((r) => setTimeout(r, 50));
+
+      // Load saved agents from config
+      const savedAgents = config.get('agents') || [];
+      const detected = [];
+
+      // Auto-detect local /agent (skip if user previously dismissed it)
+      const dismissed = config.get('dismissedAgents') || [];
+      const localCheck = await checkAgentAvailable();
+      const localUrl = window.location.origin;
+      const hasLocal = savedAgents.some((a) => a.url === localUrl);
+      const wasDismissed = dismissed.includes(localUrl);
+      if (localCheck.available && !hasLocal && !wasDismissed) {
+        const status = localCheck.needsAuth ? 'needsAuth' : 'connected';
+        detected.push({ url: localUrl, name: 'Local Agent', status });
+      }
+
+      // Check saved agents connectivity
+      const checked = await Promise.all(
+        savedAgents.map(async (a) => {
+          const info = await checkAgentAvailable(a.url);
+          let status = 'disconnected';
+          if (info.available && !info.needsAuth) status = 'connected';
+          else if (info.available && info.needsAuth) status = 'needsAuth';
+          return { ...a, status };
+        })
+      );
+
+      // Mark local agent if it was already saved
+      if (localCheck.available && hasLocal) {
+        for (const a of checked) {
+          if (a.url === localUrl) a.status = localCheck.needsAuth ? 'needsAuth' : 'connected';
+        }
+      }
+
+      const allAgents = [...detected, ...checked];
+      setAgents(allAgents);
+
+      // Auto-select first connected agent
+      const savedSelected = config.get('selectedAgent');
+      const connected = allAgents.filter((a) => a.status === 'connected');
+      if (savedSelected && connected.some((a) => a.url === savedSelected)) {
+        setSelectedAgentUrl(savedSelected);
+        selectedAgentRef.current = savedSelected;
+      } else if (connected.length > 0) {
+        setSelectedAgentUrl(connected[0].url);
+        selectedAgentRef.current = connected[0].url;
+      }
+
+      // Persist any newly detected agents
+      if (detected.length > 0) {
+        const toSave = allAgents.map(({ url, name }) => ({ url, name }));
+        await config.set('agents', toSave);
+      }
+    })();
+  }, []);
+
+  // Debounced save to OPFS whenever chats change
+  useEffect(() => {
+    if (!loaded) return;
+    if (savePending.current) clearTimeout(savePending.current);
+    savePending.current = setTimeout(() => {
+      saveChats(chats).catch((err) => console.warn('OPFS save failed:', err));
+    }, 300);
+    return () => clearTimeout(savePending.current);
+  }, [chats, loaded]);
+
+  // Apply theme to <html> and listen for system preference changes
+  useEffect(() => {
+    const applyTheme = (mode) => {
+      if (mode === 'system') {
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+      } else {
+        document.documentElement.setAttribute('data-theme', mode);
+      }
+    };
+
+    applyTheme(theme);
+
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = () => { if (theme === 'system') applyTheme('system'); };
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [theme]);
+
+  const handleThemeChange = useCallback(async (newTheme) => {
+    setTheme(newTheme);
+    await config.set('theme', newTheme);
+  }, []);
+
+  const handleLocaleChange = useCallback(async (pref) => {
+    setLocalePref(pref);
+    await config.set('locale', pref);
+  }, []);
+
+  const activeChat = chats.find((c) => c.id === activeChatId);
+  const messages = activeChat ? activeChat.messages : [];
+
+  const handleNewChat = useCallback(() => {
+    // If the active chat is still empty, just keep it — don't spawn another
+    const current = chats.find((c) => c.id === activeChatId);
+    if (current && current.messages.length === 0) return;
+
+    const newChat = {
+      id: generateId(),
+      title: 'New Chat',
+      lastMessage: '',
+      updatedAt: formatTime(new Date()),
+      messages: [],
+    };
+    setChats((prev) => [newChat, ...prev]);
+    setActiveChatId(newChat.id);
+  }, [chats, activeChatId]);
+
+  const handleSelectChat = useCallback((chatId) => {
+    setActiveChatId(chatId);
+  }, []);
+
+  const handleDeleteChat = useCallback(async (chatId) => {
+    // First, delete the chat file from OPFS
+    await deleteChatFile(chats, chatId);
+    
+    // Then update the React state
+    setChats((prev) => {
+      const updated = prev.filter((c) => c.id !== chatId);
+      // If we deleted the active chat, select the next one (or none)
+      if (chatId === activeChatId) {
+        setActiveChatId(updated.length > 0 ? updated[0].id : null);
+      }
+      return updated;
+    });
+  }, [activeChatId, chats]);
+
+  // Stream LLM response for a given chat
+  const streamResponse = useCallback(async (chatId, chatMessages) => {
+    // Prevent duplicate calls (StrictMode double-invoke guard)
+    if (abortRef.current) return;
+
+    if (!llm.isConfigured()) {
+      const hintId = generateId();
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === chatId
+            ? {
+                ...c,
+                lastMessage: 'Please configure an LLM provider in Settings.',
+                updatedAt: formatTime(new Date()),
+                messages: [
+                  ...c.messages,
+                  { id: hintId, role: 'assistant', content: 'No LLM provider configured yet. Please open Settings (gear icon) to add your API key and select a provider.' },
+                ],
+              }
+            : c
+        )
+      );
+      return;
+    }
+
+    const replyId = generateId();
+    // Add empty assistant message for streaming
+    setChats((prev) =>
+      prev.map((c) =>
+        c.id === chatId
+          ? {
+              ...c,
+              messages: [...c.messages, { id: replyId, role: 'assistant', content: '', thinking: '', toolCalls: [] }],
+            }
+          : c
+      )
+    );
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    streamingContentRef.current = '';
+    streamingThinkingRef.current = '';
+    setStreaming(true);
+
+    // Track tool calls for this message
+    const toolCalls = [];
+
+    // Helper: update message in state
+    const updateMessage = (fields) => {
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === chatId
+            ? {
+                ...c,
+                lastMessage: (fields.content || streamingContentRef.current).slice(0, 60),
+                updatedAt: formatTime(new Date()),
+                messages: c.messages.map((m) =>
+                  m.id === replyId ? { ...m, ...fields } : m
+                ),
+              }
+            : c
+        )
+      );
+    };
+
+    // Flush accumulated content to React state via rAF for real-time char sync
+    const scheduleFlush = () => {
+      if (rafRef.current) return; // already scheduled
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        updateMessage({
+          content: streamingContentRef.current,
+          thinking: streamingThinkingRef.current,
+          toolCalls: [...toolCalls],
+        });
+      });
+    };
+
+    try {
+      // Build API messages; include tool results context for the LLM
+      const buildApiMessages = (msgs) => msgs.map((m) => {
+        const msg = { role: m.role, content: m.content };
+        if (m.images?.length) msg.images = m.images;
+        return msg;
+      });
+
+      const chatOpts = { signal: controller.signal };
+      if (selectedAgentRef.current) {
+        chatOpts.systemPrompt = AGENT_SYSTEM_PROMPT;
+      }
+
+      let apiMessages = buildApiMessages(chatMessages);
+      const MAX_TOOL_ROUNDS = 10;
+
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        // Stream LLM response
+        for await (const chunk of llm.chat(apiMessages, chatOpts)) {
+          if (typeof chunk === 'string') {
+            streamingContentRef.current += chunk;
+          } else {
+            if (chunk.content) streamingContentRef.current += chunk.content;
+            if (chunk.reasoning) streamingThinkingRef.current += chunk.reasoning;
+          }
+          scheduleFlush();
+        }
+
+        // Final flush
+        if (rafRef.current) {
+          cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+        }
+
+        // Check for execute blocks in the response
+        if (!selectedAgentRef.current) break;
+        const execBlocks = parseExecuteBlocks(streamingContentRef.current);
+        // Only process NEW execute blocks (ones we haven't run yet)
+        const newBlocks = execBlocks.slice(toolCalls.length);
+        if (newBlocks.length === 0) break; // no tool calls, done
+
+        // Execute each new command
+        for (const block of newBlocks) {
+          const tc = { cmd: block.cmd, result: null };
+          toolCalls.push(tc);
+          updateMessage({
+            content: streamingContentRef.current,
+            thinking: streamingThinkingRef.current,
+            toolCalls: [...toolCalls],
+          });
+
+          try {
+            const result = await executeCommand(block.cmd, selectedAgentRef.current);
+            tc.result = result;
+          } catch (err) {
+            tc.result = { stdout: '', stderr: err.message, code: 1 };
+          }
+          updateMessage({
+            content: streamingContentRef.current,
+            thinking: streamingThinkingRef.current,
+            toolCalls: [...toolCalls],
+          });
+        }
+
+        // Build tool results summary and feed back to LLM
+        const toolResultsSummary = newBlocks.map((block, i) => {
+          const tc = toolCalls[toolCalls.length - newBlocks.length + i];
+          const r = tc.result;
+          let out = `Command: ${block.cmd}\nExit code: ${r.code}`;
+          if (r.stdout) out += `\nStdout:\n${r.stdout}`;
+          if (r.stderr) out += `\nStderr:\n${r.stderr}`;
+          return out;
+        }).join('\n---\n');
+
+        // Append assistant response + tool results to conversation for next round
+        apiMessages = [
+          ...apiMessages,
+          { role: 'assistant', content: streamingContentRef.current },
+          { role: 'user', content: `[Tool execution results]\n${toolResultsSummary}` },
+        ];
+
+        // Continue streaming from where we left off
+        streamingContentRef.current += '\n\n';
+      }
+
+      const finalContent = streamingContentRef.current;
+      const finalThinking = streamingThinkingRef.current;
+      updateMessage({ content: finalContent, thinking: finalThinking, toolCalls: [...toolCalls] });
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        const errorContent = streamingContentRef.current || `Error: ${err.message}`;
+        updateMessage({ content: errorContent, toolCalls: [...toolCalls] });
+      }
+    } finally {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      abortRef.current = null;
+      streamingContentRef.current = '';
+      streamingThinkingRef.current = '';
+      setStreaming(false);
+    }
+  }, []);
+
+  const handleStopStreaming = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+  }, []);
+
+  const handleSendMessage = useCallback(
+    (text, images) => {
+      if (streaming) return; // prevent sending while streaming
+
+      if (!activeChatId) {
+        // Auto-create a chat if none selected
+        const userMsg = { id: generateId(), role: 'user', content: text, ...(images && { images }) };
+        const newChat = {
+          id: generateId(),
+          title: text.slice(0, 30) + (text.length > 30 ? '...' : ''),
+          lastMessage: text || (images ? '[Image]' : ''),
+          updatedAt: formatTime(new Date()),
+          messages: [userMsg],
+        };
+        setChats((prev) => [newChat, ...prev]);
+        setActiveChatId(newChat.id);
+        // Schedule stream outside of state updater to avoid StrictMode double-fire
+        setTimeout(() => streamResponse(newChat.id, [userMsg]), 0);
+        return;
+      }
+
+      const userMsg = { id: generateId(), role: 'user', content: text, ...(images && { images }) };
+      const chatId = activeChatId;
+
+      setChats((prev) => {
+        const updated = prev.map((c) =>
+          c.id === chatId
+            ? {
+                ...c,
+                title: c.messages.length === 0 ? text.slice(0, 30) + (text.length > 30 ? '...' : '') : c.title,
+                lastMessage: text || (images ? '[Image]' : ''),
+                updatedAt: formatTime(new Date()),
+                messages: [...c.messages, userMsg],
+              }
+            : c
+        );
+        // Schedule stream outside of state updater
+        const chat = updated.find((c) => c.id === chatId);
+        if (chat) {
+          setTimeout(() => streamResponse(chatId, chat.messages), 0);
+        }
+        return updated;
+      });
+    },
+    [activeChatId, streaming, streamResponse]
+  );
+
+  // Track online/offline status
+  useEffect(() => {
+    const goOffline = () => setIsOffline(true);
+    const goOnline = () => setIsOffline(false);
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
+    return () => {
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online', goOnline);
+    };
+  }, []);
+
+  if (!loaded) {
+    return <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
+  }
+
+  return (
+    <I18nProvider initialLocale={localePref} onLocaleChange={handleLocaleChange}>
+    <div className="app">
+      {isOffline && <OfflineBanner />}
+      <ChatList
+        chats={chats}
+        activeChatId={activeChatId}
+        onSelectChat={handleSelectChat}
+        onNewChat={handleNewChat}
+        onDeleteChat={handleDeleteChat}
+      />
+      <MessagePanel
+        messages={messages}
+        onSendMessage={handleSendMessage}
+        streaming={streaming}
+        onStopStreaming={handleStopStreaming}
+        llmConfig={llm.getActiveConfig()}
+        providers={llm.getProviders()}
+        onConfigureLLM={async (cfg) => {
+          await llm.configure(cfg);
+          setLlmReady((prev) => !prev);
+        }}
+        onFetchModels={(providerId, config) => llm.fetchModels(providerId, config)}
+        theme={theme}
+        onThemeChange={handleThemeChange}
+        agents={agents}
+        selectedAgentUrl={selectedAgentUrl}
+        onSelectAgent={async (url) => {
+          setSelectedAgentUrl(url);
+          selectedAgentRef.current = url;
+          await config.set('selectedAgent', url);
+        }}
+        onAgentsChange={async (newAgents) => {
+          // Track dismissed / un-dismissed agents for auto-detect
+          const dismissed = config.get('dismissedAgents') || [];
+          const removed = agents.filter((a) => !newAgents.some((n) => n.url === a.url));
+          const added = newAgents.filter((n) => !agents.some((a) => a.url === n.url));
+          let updatedDismissed = dismissed;
+          if (removed.length > 0) {
+            updatedDismissed = [...new Set([...updatedDismissed, ...removed.map((a) => a.url)])];
+          }
+          if (added.length > 0) {
+            const addedUrls = new Set(added.map((a) => a.url));
+            updatedDismissed = updatedDismissed.filter((u) => !addedUrls.has(u));
+          }
+          if (updatedDismissed.length !== dismissed.length || removed.length || added.length) {
+            await config.set('dismissedAgents', updatedDismissed);
+          }
+          setAgents(newAgents);
+          const toSave = newAgents.map(({ url, name }) => ({ url, name }));
+          await config.set('agents', toSave);
+          // If selected agent was removed, clear selection
+          if (selectedAgentUrl && !newAgents.some((a) => a.url === selectedAgentUrl)) {
+            const connected = newAgents.filter((a) => a.status === 'connected');
+            const next = connected.length > 0 ? connected[0].url : null;
+            setSelectedAgentUrl(next);
+            selectedAgentRef.current = next;
+            await config.set('selectedAgent', next);
+          }
+        }}
+        onExecuteCommand={(cmd) => executeCommand(cmd, selectedAgentUrl)}
+        onFactoryReset={async () => {
+          await clearAll();
+          setChats([]);
+          setActiveChatId(null);
+          setTimeout(() => window.location.reload(), 500);
+        }}
+        showFileManage={showFileManage}
+        onToggleFileManage={() => setShowFileManage(!showFileManage)}
+        nickname={nickname}
+        onNicknameChange={async (newNickname) => {
+          setNickname(newNickname);
+          await config.set('general.nickname', newNickname);
+        }}
+      />
+      <FileManage
+        show={showFileManage}
+        onClose={() => setShowFileManage(false)}
+        refreshTrigger={chats.length}
+        width={fileManageWidth}
+        onWidthChange={setFileManageWidth}
+      />
+    </div>
+    </I18nProvider>
+  );
+}
+
+export default App;
