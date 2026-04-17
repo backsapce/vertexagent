@@ -254,12 +254,11 @@ export const Stop = ({ width = 20, height = 20, className = '' }) => (
   </svg>
 );
 
-// Battery & Status Icons
+// Context budget bar icon (rect, not battery)
 export const Battery = ({ width = 22, height = 14, ratio = 0, color = 'currentColor', className = '' }) => (
   <svg width={width} height={height} viewBox="0 0 22 14" fill="none" className={className}>
-    <rect x="0.5" y="1" width="18" height="12" rx="2" stroke="currentColor" strokeWidth="1.2" fill="none" />
-    <rect x="19" y="4" width="2.5" height="6" rx="1" fill="currentColor" opacity="0.5" />
-    <rect x="2" y="2.8" width={Math.max(14.5 * ratio, 0.5)} height="8.4" rx="1" fill={color} opacity="0.85" />
+    <rect x="0.5" y="1" width="21" height="12" rx="2" stroke="currentColor" strokeWidth="1.2" fill="none" />
+    <rect x="2" y="2.8" width={Math.max(17 * ratio, 0)} height="8.4" rx="1" fill={color} opacity="0.85" />
   </svg>
 );
 

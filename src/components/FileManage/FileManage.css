@@ -417,8 +417,35 @@
   border-left-color: var(--border-color, #333);
 }
 
+[data-theme="dark"] .filemanage-source-selector {
+  background-color: var(--color-surface-alt, #16162a);
+}
+
+[data-theme="dark"] .source-btn {
+  color: var(--color-text-secondary, #888);
+}
+
+[data-theme="dark"] .source-btn:hover {
+  background-color: var(--color-accent-hover, #3a3a6a);
+  color: var(--color-text, #e0e0e0);
+}
+
+[data-theme="dark"] .source-btn.active {
+  background-color: var(--color-primary, #4a4a8a);
+  color: var(--color-text, #e0e0e0);
+}
+
 [data-theme="dark"] .filemanage-header h3 {
   color: var(--text-primary, #e0e0e0);
+}
+
+[data-theme="dark"] .filemanage-header-btn {
+  color: var(--color-text-secondary, #888);
+}
+
+[data-theme="dark"] .filemanage-header-btn:hover {
+  background-color: var(--color-accent-hover, #3a3a6a);
+  color: var(--color-text, #e0e0e0);
 }
 
 [data-theme="dark"] .filemanage-close-btn {

@@ -168,10 +168,12 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       return next;
     });
 
-    if (!isCurrentlyExpanded && fileSource === 'remote' && dirName && dirName !== '/') {
+    if (!isCurrentlyExpanded) {
+      const path = parentDir ? `${parentDir}/${dirName}` : dirName;
       try {
-        const path = parentDir ? `${parentDir}/${dirName}` : dirName;
-        const children = await listRemoteFiles(path, REMOTE_ORIGIN());
+        const children = fileSource === 'local'
+          ? (await loadFiles(path))
+          : (await listRemoteFiles(path, REMOTE_ORIGIN()));
         setFileTree((prevTree) => {
           const updateNode = (node) => {
             if (node.id === dirId) return { ...node, children };

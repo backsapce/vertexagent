@@ -253,11 +253,36 @@ export async function loadFiles(dirName) {
         parentDir: dirName,
       });
     } else {
+      const subdir = await dir.getDirectoryHandle(name);
+      const subChildren = [];
+      for (const { name: subName, kind: subKind } of await listEntries(subdir)) {
+        if (subKind === 'file') {
+          const subFile = await (await subdir.getFileHandle(subName)).getFile();
+          subChildren.push({
+            id: `file-${dirName ? `${dirName}/${name}` : name}-${subName}`,
+            name: subName,
+            type: 'file',
+            size: subFile.size,
+            lastModified: subFile.lastModified,
+            fileName: subName,
+            category: dirName ? `${dirName}/${name}` : name,
+            parentDir: dirName ? `${dirName}/${name}` : name,
+          });
+        } else {
+          subChildren.push({
+            id: `dir-${dirName ? `${dirName}/${name}` : name}-${subName}`,
+            name: subName,
+            type: 'directory',
+            children: [],
+            parentDir: dirName ? `${dirName}/${name}` : name,
+          });
+        }
+      }
       children.push({
         id: `dir-${dirName || 'root'}-${name}`,
         name,
         type: 'directory',
-        children: [],
+        children: subChildren,
         parentDir: dirName,
       });
     }

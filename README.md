@@ -8,8 +8,7 @@ Open the page, pick a model, and start chatting. All data stays on your device v
 
 - **Pure browser runtime** — no server, no database, no signup. Works offline as a PWA.
 - **Zero install & config** — open the URL and go. Settings are persisted in-browser automatically.
-- **Multi-provider LLM support** — OpenAI, Anthropic Claude, Google Gemini, OpenRouter, Qwen, or any OpenAI-compatible endpoint.
-- **Streaming responses** — real-time token-by-token output with smooth rendering.
+- **Multi-provider LLM support** — OpenAI, Anthropic Claude, Google Gemini, OpenRouter, Qwen, or any OpenAI-compatible endpoint.API KEY SAVE IN YOUR LOCAL BROSWER,NOT ON SERVER.
 - **Agent Node connection** — connect to a remote or local Agent Node to run shell commands with token-based authentication.
 - **OPFS-powered storage** — chat history, settings, and config all live in the browser's private filesystem.
 - **Data portability** — export everything to a ZIP, import it back, or factory-reset with one click.
