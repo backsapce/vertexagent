@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
 import { loadFiles, saveFile, createFile, createDirectory, deleteFile as deleteLocalFile, getFileBlob } from '../../vfs/opfs';
 import { listRemoteFiles, createRemoteFile, deleteRemoteFile, uploadRemoteFile, downloadRemoteFile } from '../../models/agent';
@@ -6,9 +6,22 @@ import { ChevronRight, Folder, File, FilePlus, FolderPlus, Refresh, X, Upload, C
 import FileEditor from './FileEditor';
 import './FileManage.css';
 
+const REMOTE_ORIGIN = () => window.location.origin;
+
+function triggerDownload(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => {
   const { t } = useI18n();
-  const [fileSource, setFileSource] = useState('local'); // 'local' or 'remote'
+  const [fileSource, setFileSource] = useState('local');
   const [fileTree, setFileTree] = useState(null);
   const [expandedDirs, setExpandedDirs] = useState(new Set());
   const expandedDirsRef = useRef(new Set());
@@ -16,207 +29,124 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   const [loading, setLoading] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [error, setError] = useState(null);
-  const [selectedPath, setSelectedPath] = useState(null); // Selected upload target path
-  const [selectedName, setSelectedName] = useState(null); // Selected item name for display
+  const [selectedPath, setSelectedPath] = useState(null);
+  const [selectedName, setSelectedName] = useState(null);
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
-  
-  // File editor state
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingFile, setEditingFile] = useState(null);
 
-  // Load files when shown, source changes, or refreshTrigger changes
-  useEffect(() => {
-    if (show) {
-      setLoading(true);
-      setError(null);
-      
-      const loadFn = fileSource === 'local' ? loadFiles : () => listRemoteFiles('', window.location.origin);
-      
-      loadFn()
-        .then((rootDir) => {
-          setFileTree({
-            ...rootDir,
-            expanded: true,
-          });
-          setExpandedDirs(new Set(['root']));
-        })
-        .catch((err) => {
-          console.warn('Failed to load files:', err);
-          setError(fileSource === 'local' ? t('filemanage.loadLocalError') : t('filemanage.loadRemoteError'));
-          setFileTree({
-            id: 'root',
-            name: '/',
-            type: 'directory',
-            expanded: true,
-            children: [],
-          });
-          setExpandedDirs(new Set(['root']));
-        })
-        .finally(() => {
-          setLoading(false);
-        });
+  // Adapter: local vs remote file operations, eliminates branching in every handler
+  const fileOps = useMemo(() => {
+    const origin = REMOTE_ORIGIN();
+    return fileSource === 'local' ? {
+      list: () => loadFiles(),
+      createFile: (name) => createFile(name),
+      createDir: (name) => createDirectory(name),
+      delete: (name, path) => deleteLocalFile(name, path || 'files'),
+      download: (name, path) => getFileBlob(name, path || 'files'),
+      upload: (name, blob, path) => saveFile(name, blob, path || undefined),
+    } : {
+      list: () => listRemoteFiles('', origin),
+      createFile: (name) => createRemoteFile(name, '', false, origin),
+      createDir: (name) => createRemoteFile(name, '', true, origin),
+      delete: (name, path) => {
+        const fullPath = path ? `${path}/${name}` : name;
+        return deleteRemoteFile(fullPath, origin);
+      },
+      download: (name, path) => {
+        const fullPath = path ? `${path}/${name}` : name;
+        return downloadRemoteFile(fullPath, origin);
+      },
+      upload: (name, file, path) => {
+        const fullPath = path ? `${path}/${name}` : name;
+        return uploadRemoteFile(fullPath, file, origin);
+      },
+    };
+  }, [fileSource]);
+
+  // Reload tree after any mutation
+  const refreshTree = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const rootDir = await fileOps.list();
+      setFileTree({ ...rootDir, expanded: true });
+      setExpandedDirs(new Set(['root']));
+    } catch (_err) {
+      setError(fileSource === 'local' ? t('filemanage.loadLocalError') : t('filemanage.loadRemoteError'));
+      setFileTree({ id: 'root', name: '/', type: 'directory', expanded: true, children: [] });
+      setExpandedDirs(new Set(['root']));
+    } finally {
+      setLoading(false);
     }
-  }, [show, refreshTrigger, fileSource, t]);
+  }, [fileOps, fileSource, t]);
+
+  // Initial load when shown or source/trigger changes
+  useEffect(() => {
+    if (show) refreshTree();
+  }, [show, refreshTrigger, fileSource]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep ref in sync with state
-  useEffect(() => {
-    expandedDirsRef.current = expandedDirs;
-  }, [expandedDirs]);
+  useEffect(() => { expandedDirsRef.current = expandedDirs; }, [expandedDirs]);
 
-  // Handle file upload via input (local)
-  const handleLocalFileUpload = useCallback(async (files, targetPath) => {
-    if (!files || files.length === 0) return;
-    
-    setUploading(true);
-    const fileArray = Array.from(files);
-    let successCount = 0;
-    let failCount = 0;
-    
-    try {
-      for (const file of fileArray) {
-        try {
-          await saveFile(file.name, file, targetPath || undefined);
-          successCount++;
-        } catch (fileErr) {
-          console.warn('Failed to upload file:', fileErr);
-          failCount++;
-        }
-      }
-      // Always reload from root to get the complete tree
-      const rootDir = await loadFiles(undefined);
-      setFileTree({
-        ...rootDir,
-        expanded: true,
-      });
-      
-      // Show success/failure report
-      if (successCount > 0 && failCount === 0) {
-        alert(t('filemanage.uploadSuccess').replace('{count}', successCount));
-      } else if (successCount > 0 && failCount > 0) {
-        alert(t('filemanage.uploadPartialSuccess').replace('{success}', successCount).replace('{fail}', failCount));
-      } else {
-        alert(t('filemanage.uploadLocalError'));
-      }
-    } catch (err) {
-      console.warn('Failed to upload file:', err);
-      alert(t('filemanage.uploadLocalError'));
-    } finally {
-      setUploading(false);
-    }
-  }, [t]);
-
-  // Handle file upload to remote
-  const handleRemoteFileUpload = useCallback(async (files, targetPath) => {
-    if (!files || files.length === 0) return;
-    
-    setUploading(true);
-    const fileArray = Array.from(files);
-    let successCount = 0;
-    let failCount = 0;
-    
-    try {
-      for (const file of fileArray) {
-        try {
-          const uploadPath = targetPath ? `${targetPath}/${file.name}` : file.name;
-          await uploadRemoteFile(uploadPath, file, window.location.origin);
-          successCount++;
-        } catch (fileErr) {
-          console.warn('Failed to upload remote file:', fileErr);
-          failCount++;
-        }
-      }
-      const rootDir = await listRemoteFiles('', window.location.origin);
-      setFileTree({
-        ...rootDir,
-        expanded: true,
-      });
-      
-      // Show success/failure report
-      if (successCount > 0 && failCount === 0) {
-        alert(t('filemanage.uploadSuccess').replace('{count}', successCount));
-      } else if (successCount > 0 && failCount > 0) {
-        alert(t('filemanage.uploadPartialSuccess').replace('{success}', successCount).replace('{fail}', failCount));
-      } else {
-        alert(t('filemanage.uploadRemoteError'));
-      }
-    } catch (err) {
-      console.warn('Failed to upload remote file:', err);
-      alert(t('filemanage.uploadRemoteError'));
-    } finally {
-      setUploading(false);
-    }
-  }, [t]);
-
+  // Upload files (local or remote via adapter)
   const handleFileUpload = useCallback(async (files, targetPath) => {
-    if (fileSource === 'local') {
-      await handleLocalFileUpload(files, targetPath);
-    } else {
-      await handleRemoteFileUpload(files, targetPath);
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    const fileArray = Array.from(files);
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+      for (const file of fileArray) {
+        try {
+          await fileOps.upload(file.name, file, targetPath);
+          successCount++;
+        } catch { failCount++; }
+      }
+      await refreshTree();
+
+      if (failCount === 0) alert(t('filemanage.uploadSuccess').replace('{count}', successCount));
+      else if (successCount > 0) alert(t('filemanage.uploadPartialSuccess').replace('{success}', successCount).replace('{fail}', failCount));
+      else alert(fileSource === 'local' ? t('filemanage.uploadLocalError') : t('filemanage.uploadRemoteError'));
+    } catch {
+      alert(fileSource === 'local' ? t('filemanage.uploadLocalError') : t('filemanage.uploadRemoteError'));
+    } finally {
+      setUploading(false);
     }
-  }, [fileSource, handleLocalFileUpload, handleRemoteFileUpload]);
+  }, [fileOps, refreshTree, fileSource, t]);
 
   const handleFileInputChange = useCallback(async (e) => {
-    const files = e.target.files;
-    if (fileSource === 'local') {
-      await handleLocalFileUpload(files, selectedPath);
-    } else {
-      await handleRemoteFileUpload(files, selectedPath);
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  }, [fileSource, selectedPath, handleLocalFileUpload, handleRemoteFileUpload]);
+    await handleFileUpload(e.target.files, selectedPath);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [handleFileUpload, selectedPath]);
 
-  // Handle drag and drop
+  // Drag and drop
   useEffect(() => {
     const dropZone = dropZoneRef.current;
     if (!dropZone || !show) return;
-
-    const handleDragOver = (e) => {
-      e.preventDefault();
-      dropZone.classList.add('drag-over');
-    };
-
-    const handleDragLeave = (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('drag-over');
-    };
-
-    const handleDrop = (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('drag-over');
-      handleFileUpload(e.dataTransfer.files);
-    };
-
+    const handleDragOver = (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); };
+    const handleDragLeave = (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); };
+    const handleDrop = (e) => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFileUpload(e.dataTransfer.files); };
     dropZone.addEventListener('dragover', handleDragOver);
     dropZone.addEventListener('dragleave', handleDragLeave);
     dropZone.addEventListener('drop', handleDrop);
-
     return () => {
       dropZone.removeEventListener('dragover', handleDragOver);
       dropZone.removeEventListener('dragleave', handleDragLeave);
       dropZone.removeEventListener('drop', handleDrop);
     };
-  }, [show, handleFileUpload, fileSource]);
+  }, [show, handleFileUpload]);
 
   // Resize handlers
-  const handleMouseDown = useCallback((e) => {
-    e.preventDefault();
-    setIsResizing(true);
-  }, []);
-
+  const handleMouseDown = useCallback((e) => { e.preventDefault(); setIsResizing(true); }, []);
   const handleMouseMove = useCallback((e) => {
     if (!isResizing) return;
     const newWidth = window.innerWidth - e.clientX;
-    if (newWidth >= 200 && newWidth <= 600) {
-      onWidthChange?.(newWidth);
-    }
+    if (newWidth >= 200 && newWidth <= 600) onWidthChange?.(newWidth);
   }, [isResizing, onWidthChange]);
-
-  const handleMouseUp = useCallback(() => {
-    setIsResizing(false);
-  }, []);
+  const handleMouseUp = useCallback(() => setIsResizing(false), []);
 
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove);
@@ -229,39 +159,23 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
 
   // Toggle directory expansion
   const toggleDirectory = useCallback(async (dirId, dirName, parentDir = '') => {
-    // Check current expansion state using ref to avoid stale closure
     const isCurrentlyExpanded = expandedDirsRef.current.has(dirId);
-    
     setExpandedDirs((prev) => {
       const next = new Set(prev);
-      
-      if (isCurrentlyExpanded) {
-        // Collapse: remove from set
-        next.delete(dirId);
-      } else {
-        // Expand: add to set
-        next.add(dirId);
-      }
-      
-      // Update ref synchronously
+      if (isCurrentlyExpanded) next.delete(dirId);
+      else next.add(dirId);
       expandedDirsRef.current = new Set(next);
-      
       return next;
     });
 
-    // Load directory content if expanding (only for remote files)
     if (!isCurrentlyExpanded && fileSource === 'remote' && dirName && dirName !== '/') {
       try {
         const path = parentDir ? `${parentDir}/${dirName}` : dirName;
-        const children = await listRemoteFiles(path, window.location.origin);
+        const children = await listRemoteFiles(path, REMOTE_ORIGIN());
         setFileTree((prevTree) => {
           const updateNode = (node) => {
-            if (node.id === dirId) {
-              return { ...node, children };
-            }
-            if (node.children) {
-              return { ...node, children: node.children.map(updateNode) };
-            }
+            if (node.id === dirId) return { ...node, children };
+            if (node.children) return { ...node, children: node.children.map(updateNode) };
             return node;
           };
           return updateNode(prevTree);
@@ -272,214 +186,81 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
     }
   }, [fileSource]);
 
+  // New file / dir — unified via adapter
   const handleNewFile = useCallback(async () => {
     const fileName = prompt(t('filemanage.newFileNamePrompt'), 'untitled.txt');
     if (!fileName) return;
-    
-    try {
-      if (fileSource === 'local') {
-        await createFile(fileName, undefined);
-        const rootDir = await loadFiles();
-        setFileTree({
-          ...rootDir,
-          expanded: true,
-        });
-      } else {
-        // Remote file creation
-        await createRemoteFile(fileName, '', false, window.location.origin);
-        const rootDir = await listRemoteFiles('', window.location.origin);
-        setFileTree({
-          ...rootDir,
-          expanded: true,
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to create file:', err);
-      alert(t('filemanage.createFileError'));
-    }
-  }, [t, fileSource]);
+    try { await fileOps.createFile(fileName); } catch { alert(t('filemanage.createFileError')); return; }
+    await refreshTree();
+  }, [t, fileOps, refreshTree]);
 
   const handleNewDir = useCallback(async () => {
-    const newDirName = prompt(t('filemanage.newDirNamePrompt'), 'new-folder');
-    if (!newDirName) return;
-    
-    try {
-      if (fileSource === 'local') {
-        await createDirectory(newDirName, undefined);
-        const rootDir = await loadFiles();
-        setFileTree({
-          ...rootDir,
-          expanded: true,
-        });
-      } else {
-        // Remote directory creation
-        await createRemoteFile(newDirName, '', true, window.location.origin);
-        const rootDir = await listRemoteFiles('', window.location.origin);
-        setFileTree({
-          ...rootDir,
-          expanded: true,
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to create directory:', err);
-      alert(t('filemanage.createDirError'));
-    }
-  }, [t, fileSource]);
+    const dirName = prompt(t('filemanage.newDirNamePrompt'), 'new-folder');
+    if (!dirName) return;
+    try { await fileOps.createDir(dirName); } catch { alert(t('filemanage.createDirError')); return; }
+    await refreshTree();
+  }, [t, fileOps, refreshTree]);
 
-  const handleRefresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const loadFn = fileSource === 'local' ? loadFiles : () => listRemoteFiles('', window.location.origin);
-      const rootDir = await loadFn();
-      setFileTree({
-        ...rootDir,
-        expanded: true,
-      });
-      setExpandedDirs(new Set(['root']));
-    } catch (err) {
-      console.warn('Failed to refresh:', err);
-      setError(fileSource === 'local' ? t('filemanage.loadLocalError') : t('filemanage.loadRemoteError'));
-    } finally {
-      setLoading(false);
-    }
-  }, [fileSource, t]);
-
-  const handleSourceChange = useCallback((newSource) => {
-    setFileSource(newSource);
-  }, []);
-
-  // Delete file handler
+  // Delete — unified via adapter
   const handleDeleteFile = useCallback(async (fileName, filePath, isDirectory) => {
-    const confirmMsg = isDirectory 
+    const confirmMsg = isDirectory
       ? t('filemanage.confirmDeleteDir').replace('{name}', fileName)
       : t('filemanage.confirmDeleteFile').replace('{name}', fileName);
-    
     if (!window.confirm(confirmMsg)) return;
-    
-    try {
-      if (fileSource === 'local') {
-        await deleteLocalFile(fileName, filePath || 'files');
-        const rootDir = await loadFiles();
-        setFileTree({
-          ...rootDir,
-          expanded: true,
-        });
-      } else {
-        // Remote delete
-        const path = filePath ? `${filePath}/${fileName}` : fileName;
-        await deleteRemoteFile(path, window.location.origin);
-        const rootDir = await listRemoteFiles('', window.location.origin);
-        setFileTree({
-          ...rootDir,
-          expanded: true,
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to delete file:', err);
-      alert(t('filemanage.deleteFileError'));
-    }
-  }, [t, fileSource]);
+    try { await fileOps.delete(fileName, filePath); } catch { alert(t('filemanage.deleteFileError')); return; }
+    await refreshTree();
+  }, [t, fileOps, refreshTree]);
 
-  // Download file handler
+  // Download — unified via adapter
   const handleDownloadFile = useCallback(async (fileName, filePath) => {
     try {
-      if (fileSource === 'local') {
-        // Download local file
-        const blob = await getFileBlob(fileName, filePath || 'files');
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      } else {
-        // Download remote file
-        const path = filePath ? `${filePath}/${fileName}` : fileName;
-        const blob = await downloadRemoteFile(path, window.location.origin);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }
-    } catch (err) {
-      console.warn('Failed to download file:', err);
-      alert(t('filemanage.downloadFileError'));
-    }
-  }, [t, fileSource]);
+      const blob = await fileOps.download(fileName, filePath);
+      triggerDownload(blob, fileName);
+    } catch { alert(t('filemanage.downloadFileError')); }
+  }, [t, fileOps]);
 
-  // Edit file handler
   const handleEditFile = useCallback((fileName, filePath) => {
     setEditingFile({ fileName, filePath });
     setEditorOpen(true);
   }, []);
 
-  const handleEditorClose = useCallback(() => {
-    setEditorOpen(false);
-    setEditingFile(null);
-  }, []);
+  const handleEditorClose = useCallback(() => { setEditorOpen(false); setEditingFile(null); }, []);
+  const handleEditorSave = useCallback(() => refreshTree(), [refreshTree]);
 
-  // Select item as upload target - build full path to selected item
-  const handleSelectItem = useCallback((path, name, isDirectory) => {
-    // Build the full path for upload target
-    // When selecting a directory, files upload TO that directory
-    // When selecting a file, files upload to the same directory as that file
-    const fullPath = path ? `${path}/${name}` : name;
-    setSelectedPath(fullPath);
+  const handleSelectItem = useCallback((path, name) => {
+    setSelectedPath(path ? `${path}/${name}` : name);
     setSelectedName(name);
   }, []);
 
-  // Clear selection
-  const handleClearSelection = useCallback(() => {
-    setSelectedPath(null);
-    setSelectedName(null);
-  }, []);
-
-  const handleEditorSave = useCallback(() => {
-    // Refresh file list after save
-    handleRefresh();
-  }, [handleRefresh]);
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
 
   const renderTreeNode = (node, depth = 0, parentDir = '') => {
     if (node.type === 'directory') {
       const isExpanded = expandedDirs.has(node.id);
       const isSelected = selectedPath === node.parentDir && selectedName === node.name;
-      // Build the full path for this directory
       const dirPath = parentDir ? `${parentDir}/${node.name}` : node.name;
-      
+
       return (
         <div key={node.id} className={`tree-node directory-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 16 }}>
           <div
             className="tree-item"
             onClick={(e) => {
               e.stopPropagation();
-              handleSelectItem(parentDir || '', node.name, true);
+              handleSelectItem(parentDir || '', node.name);
               toggleDirectory(node.id, node.name, parentDir || node.parentDir);
             }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              handleSelectItem(parentDir || '', node.name, true);
-            }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleSelectItem(parentDir || '', node.name); }}
           >
-            <ChevronRight
-              className="tree-chevron"
-              width={12}
-              height={12}
-              style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-            />
+            <ChevronRight className="tree-chevron" width={12} height={12} style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }} />
             <Folder className="tree-icon folder-icon" width={18} height={18} />
             <span className="tree-label">{node.name}</span>
-            {isExpanded && node.children && node.children.length > 0 && (
-              <span className="tree-count">({node.children.length})</span>
-            )}
+            {isExpanded && node.children?.length > 0 && <span className="tree-count">({node.children.length})</span>}
             {isSelected && <span className="tree-selected-badge">✓</span>}
           </div>
           {isExpanded && node.children && (
@@ -493,54 +274,16 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       const isSelected = selectedPath === node.parentDir && selectedName === node.name;
       return (
         <div key={node.id} className={`tree-node file-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 16 + 12 }}>
-          <div 
-            className="tree-item file-item"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleSelectItem(node.parentDir || '', node.name, false);
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              handleSelectItem(node.parentDir || '', node.name, false);
-            }}
-          >
+          <div className="tree-item file-item" onClick={(e) => { e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name); }}>
             <span className="tree-icon-spacer" />
             <File className="tree-icon file-icon" width={18} height={18} />
             <span className="tree-label">{node.name}</span>
             {node.size && <span className="tree-size">{formatFileSize(node.size)}</span>}
             {isSelected && <span className="tree-selected-badge">✓</span>}
             <div className="file-actions">
-              <button
-                className="file-action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleEditFile(node.name, node.parentDir);
-                }}
-                title={t('filemanage.edit')}
-              >
-                <FileEdit width={16} height={16} />
-              </button>
-              <button
-                className="file-action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDownloadFile(node.name, node.parentDir);
-                }}
-                title={t('filemanage.download')}
-              >
-                <Download width={16} height={16} />
-              </button>
-              <button
-                className="file-action-btn delete-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteFile(node.name, node.parentDir, false);
-                }}
-                title={t('filemanage.delete')}
-              >
-                <Trash width={16} height={16} />
-              </button>
+              <button className="file-action-btn" onClick={(e) => { e.stopPropagation(); handleEditFile(node.name, node.parentDir); }} title={t('filemanage.edit')}><FileEdit width={16} height={16} /></button>
+              <button className="file-action-btn" onClick={(e) => { e.stopPropagation(); handleDownloadFile(node.name, node.parentDir); }} title={t('filemanage.download')}><Download width={16} height={16} /></button>
+              <button className="file-action-btn delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteFile(node.name, node.parentDir, false); }} title={t('filemanage.delete')}><Trash width={16} height={16} /></button>
             </div>
           </div>
         </div>
@@ -548,123 +291,51 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
     }
   };
 
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-  };
-
   if (!show) return null;
 
   return (
-    <div
-      className={`filemanage-panel ${show ? 'show' : ''}`}
-      style={{ '--panel-width': `${width}px` }}
-    >
-      {/* Header */}
+    <div className={`filemanage-panel ${show ? 'show' : ''}`} style={{ '--panel-width': `${width}px` }}>
       <div className="filemanage-header">
         <div className="filemanage-header-left">
-          {/* Source Selector */}
           <div className="filemanage-source-selector">
-            <button
-              className={`source-btn ${fileSource === 'local' ? 'active' : ''}`}
-              onClick={() => handleSourceChange('local')}
-              title={t('filemanage.localFiles')}
-            >
-              <HardDrive width={16} height={16} />
-              <span>{t('filemanage.localFiles')}</span>
-            </button>
-            <button
-              className={`source-btn ${fileSource === 'remote' ? 'active' : ''}`}
-              onClick={() => handleSourceChange('remote')}
-              title={t('filemanage.remoteFiles')}
-            >
-              <Cloud width={16} height={16} />
-              <span>{t('filemanage.remoteFiles')}</span>
-            </button>
+            <button className={`source-btn ${fileSource === 'local' ? 'active' : ''}`} onClick={() => setFileSource('local')} title={t('filemanage.localFiles')}><HardDrive width={16} height={16} /><span>{t('filemanage.localFiles')}</span></button>
+            <button className={`source-btn ${fileSource === 'remote' ? 'active' : ''}`} onClick={() => setFileSource('remote')} title={t('filemanage.remoteFiles')}><Cloud width={16} height={16} /><span>{t('filemanage.remoteFiles')}</span></button>
           </div>
         </div>
         <div className="filemanage-header-buttons">
-          <button className="filemanage-header-btn" onClick={handleNewFile} title={t('filemanage.newFile')}>
-            <FilePlus width={18} height={18} />
-          </button>
-          <button className="filemanage-header-btn" onClick={handleNewDir} title={t('filemanage.newDir')}>
-            <FolderPlus width={18} height={18} />
-          </button>
-          <button className="filemanage-header-btn" onClick={handleRefresh} title={t('filemanage.refresh')}>
-            <Refresh width={18} height={18} />
-          </button>
-          <button className="filemanage-close-btn" onClick={onClose}>
-            <X width={18} height={18} />
-          </button>
+          <button className="filemanage-header-btn" onClick={handleNewFile} title={t('filemanage.newFile')}><FilePlus width={18} height={18} /></button>
+          <button className="filemanage-header-btn" onClick={handleNewDir} title={t('filemanage.newDir')}><FolderPlus width={18} height={18} /></button>
+          <button className="filemanage-header-btn" onClick={refreshTree} title={t('filemanage.refresh')}><Refresh width={18} height={18} /></button>
+          <button className="filemanage-close-btn" onClick={onClose}><X width={18} height={18} /></button>
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="filemanage-content" ref={dropZoneRef}>
-        {/* File Tree */}
         <div className="filemanage-tree">
           {loading ? (
-            <div className="filemanage-empty">
-              <Folder width={48} height={48} />
-              <p>{t('filemanage.loading')}</p>
-            </div>
+            <div className="filemanage-empty"><Folder width={48} height={48} /><p>{t('filemanage.loading')}</p></div>
           ) : error ? (
-            <div className="filemanage-empty">
-              <Folder width={48} height={48} />
-              <p className="filemanage-error">{error}</p>
-            </div>
-          ) : fileTree && fileTree.children?.length === 0 ? (
-            <div className="filemanage-empty">
-              <Folder width={48} height={48} />
-              <p>{fileSource === 'local' ? t('filemanage.empty') : t('filemanage.remoteEmpty')}</p>
-            </div>
+            <div className="filemanage-empty"><Folder width={48} height={48} /><p className="filemanage-error">{error}</p></div>
+          ) : fileTree?.children?.length === 0 ? (
+            <div className="filemanage-empty"><Folder width={48} height={48} /><p>{fileSource === 'local' ? t('filemanage.empty') : t('filemanage.remoteEmpty')}</p></div>
           ) : (
             fileTree && renderTreeNode(fileTree)
           )}
         </div>
 
-        {/* Upload Zone */}
         <div className="filemanage-upload-zone">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            style={{ display: 'none' }}
-            onChange={handleFileInputChange}
-          />
-          <button
-            className="filemanage-upload-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-          >
+          <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileInputChange} />
+          <button className="filemanage-upload-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
             <Upload width={20} height={20} />
             {uploading ? t('filemanage.uploading') : t('filemanage.upload')}
           </button>
           <span className="filemanage-drop-hint">{t('filemanage.dropHint')}</span>
-          {selectedName && (
-            <span className="filemanage-selected-hint">{t('filemanage.selectedHint').replace('{name}', selectedName)}</span>
-          )}
+          {selectedName && <span className="filemanage-selected-hint">{t('filemanage.selectedHint').replace('{name}', selectedName)}</span>}
         </div>
       </div>
 
-      {/* Resize Handle */}
-      <div
-        className={`filemanage-resize-handle ${isResizing ? 'resizing' : ''}`}
-        onMouseDown={handleMouseDown}
-      />
-
-      {/* File Editor Modal */}
-      <FileEditor
-        show={editorOpen}
-        onClose={handleEditorClose}
-        fileName={editingFile?.fileName}
-        filePath={editingFile?.filePath}
-        fileSource={fileSource}
-        onSave={handleEditorSave}
-      />
+      <div className={`filemanage-resize-handle ${isResizing ? 'resizing' : ''}`} onMouseDown={handleMouseDown} />
+      <FileEditor show={editorOpen} onClose={handleEditorClose} fileName={editingFile?.fileName} filePath={editingFile?.filePath} fileSource={fileSource} onSave={handleEditorSave} />
     </div>
   );
 };

@@ -244,3 +244,61 @@ export async function downloadRemoteFile(path, url) {
   }
   return res.blob();
 }
+
+/**
+ * Initialize agents: detect local agent, check saved agents connectivity,
+ * and determine which agent should be auto-selected.
+ * @returns {Promise<{ agents: Array, selectedUrl: string|null }>}
+ */
+export async function initAgents() {
+  // Wait until config is initialized
+  while (!config.initialized) await new Promise((r) => setTimeout(r, 50));
+
+  const savedAgents = config.get('agents') || [];
+  const dismissed = config.get('dismissedAgents') || [];
+  const localUrl = window.location.origin;
+  const localCheck = await checkAgentAvailable();
+  const detected = [];
+
+  // Auto-detect local agent
+  const hasLocal = savedAgents.some((a) => a.url === localUrl);
+  const wasDismissed = dismissed.includes(localUrl);
+  if (localCheck.available && !hasLocal && !wasDismissed) {
+    const status = localCheck.needsAuth ? 'needsAuth' : 'connected';
+    detected.push({ url: localUrl, name: 'Local Agent', status });
+  }
+
+  // Check saved agents connectivity
+  const checked = await Promise.all(
+    savedAgents.map(async (a) => {
+      const info = await checkAgentAvailable(a.url);
+      let status = 'disconnected';
+      if (info.available && !info.needsAuth) status = 'connected';
+      else if (info.available && info.needsAuth) status = 'needsAuth';
+      return { ...a, status };
+    })
+  );
+
+  // Update local agent status if it was already saved
+  if (localCheck.available && hasLocal) {
+    for (const a of checked) {
+      if (a.url === localUrl) a.status = localCheck.needsAuth ? 'needsAuth' : 'connected';
+    }
+  }
+
+  const allAgents = [...detected, ...checked];
+
+  // Persist newly detected agents
+  if (detected.length > 0) {
+    await config.set('agents', allAgents.map(({ url, name }) => ({ url, name })));
+  }
+
+  // Auto-select first connected agent
+  const savedSelected = config.get('selectedAgent');
+  const connected = allAgents.filter((a) => a.status === 'connected');
+  const selectedUrl = (savedSelected && connected.some((a) => a.url === savedSelected))
+    ? savedSelected
+    : (connected.length > 0 ? connected[0].url : null);
+
+  return { agents: allAgents, selectedUrl };
+}

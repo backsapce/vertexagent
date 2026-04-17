@@ -52,7 +52,7 @@ const Settings = ({
     if (!show) return;
     setLocalNickname(nickname || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show, nickname]);
+  }, [show]);
 
   // Initialize form when opening
   useEffect(() => {

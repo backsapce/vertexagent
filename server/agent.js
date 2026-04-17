@@ -9,33 +9,38 @@
  *   1. Client hits GET /agent → gets { status: 'ok', needsAuth: true }
  *   2. Server prints a temp token to console on startup
  *   3. Client sends POST /agent/connect { token: '<temp-token>' }
- *   4. Server validates, generates a long-lived token, saves it to .agent-token,
+ *   4. Server validates, generates a long-lived token, saves it to token file,
  *      and returns { token: '<long-lived-token>' }
  *   5. All subsequent POST /agent requests must include Authorization: Bearer <token>
  *
- * Endpoints:
- *   GET  /agent            → health check (returns { status, needsAuth })
- *   POST /agent/connect    → exchange temp token for long-lived token
- *   POST /agent            → execute a command  { cmd: "ls -la" }
- *                             returns { stdout, stderr, code }
- *   GET  /agent/files      → list files in working directory
- *   POST /agent/files      → create file or directory
- *   POST /agent/files/upload → upload a file
- *   DELETE /agent/files    → delete a file or directory
- *   GET  /agent/files/download → download a file
+ * Security features:
+ *   - Command validation (blocks destructive patterns)
+ *   - Rate limiting on connect and command endpoints
+ *   - CORS restricted to allowed origins (not wildcard)
+ *   - Path traversal protection with normalized comparison
+ *   - Higher-entropy temp tokens (8 bytes = 16 hex chars)
  */
 
 import { createServer } from 'node:http';
 import { exec } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, unlinkSync, rmdirSync } from 'node:fs';
-import { join, extname, normalize, resolve } from 'node:path';
+import { join, extname, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const STATIC_DIR = join(__dirname, '..', 'dist');
-const WORKING_DIR = join(process.cwd(), '.vertex-agent');
+const WORKING_DIR = resolve(join(process.cwd(), '.vertex-agent'));
+
+// ─── Configuration ──────────────────────────────────────────────────────────
+
+const PORT = process.env.AGENT_PORT || 3099;
+const MAX_TIMEOUT = 30_000;
+const TOKEN_FILE = process.env.AGENT_TOKEN_FILE || join(process.cwd(), '.agent-token');
+const ALLOWED_ORIGINS = (process.env.AGENT_ALLOWED_ORIGINS || 'http://localhost:5173').split(',');
+
+// ─── MIME types ─────────────────────────────────────────────────────────────
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -64,34 +69,55 @@ function serveStatic(res, filePath) {
   }
 }
 
-const PORT = process.env.AGENT_PORT || 3099;
-const MAX_TIMEOUT = 30_000; // 30 seconds max per command
-const TOKEN_FILE = join(process.cwd(), '.agent-token');
+// ─── CORS ───────────────────────────────────────────────────────────────────
 
-// ─── Token management ────────────────────────────────────────────────────────
+function corsHeaders(req) {
+  const origin = req.headers['origin'] || '';
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+}
 
-let tempToken = null;      // one-time token printed to console
-let validTokens = new Set(); // long-lived tokens that grant access
+// ─── Rate limiting ──────────────────────────────────────────────────────────
+
+const rateLimits = new Map(); // key → { count, resetAt }
+
+function isRateLimited(key, maxRequests, windowMs) {
+  const now = Date.now();
+  const entry = rateLimits.get(key);
+  if (!entry || now >= entry.resetAt) {
+    rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return false;
+  }
+  entry.count++;
+  return entry.count > maxRequests;
+}
+
+// ─── Token management ───────────────────────────────────────────────────────
+
+let tempToken = null;
+const validTokens = new Set();
 
 function generateToken(bytes = 32) {
   return randomBytes(bytes).toString('hex');
 }
 
-/** Load persisted tokens from .agent-token file (one per line). */
 function loadTokens() {
   try {
     if (existsSync(TOKEN_FILE)) {
       const content = readFileSync(TOKEN_FILE, 'utf-8');
       const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
       for (const t of lines) validTokens.add(t);
-      console.log(`[agent] Loaded ${validTokens.size} saved token(s) from ${TOKEN_FILE}`);
+      console.log(`[agent] Loaded ${validTokens.size} saved token(s)`);
     }
   } catch (err) {
     console.warn('[agent] Could not read token file:', err.message);
   }
 }
 
-/** Persist all valid tokens to .agent-token file. */
 function saveTokens() {
   try {
     writeFileSync(TOKEN_FILE, [...validTokens].join('\n') + '\n', 'utf-8');
@@ -100,14 +126,49 @@ function saveTokens() {
   }
 }
 
-/** Check if the Authorization header carries a valid token. */
 function isAuthorized(req) {
   const auth = req.headers['authorization'] || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
   return validTokens.has(token);
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Command validation ─────────────────────────────────────────────────────
+
+const BLOCKED_PATTERNS = [
+  /rm\s+(-rf|--recursive|--force)\s+\/\s*$/,   // rm -rf /
+  /dd\s+if=/,                                   // dd (disk operations)
+  /mkfs/,                                       // filesystem format
+  /:()\s*\{\s*:\|:\s*\}/,                         // fork bomb
+  />\s*\/dev\/sd/,                              // write to raw disk
+  /chmod\s+[0-7]*\s+\/\s*$/,                    // chmod on root
+  /curl\s+.+\s*\|\s*sh/,                        // pipe curl to shell
+  /wget\s+.+\s*\|\s*sh/,                        // pipe wget to shell
+];
+
+function validateCommand(cmd) {
+  for (const pattern of BLOCKED_PATTERNS) {
+    if (pattern.test(cmd)) {
+      return { blocked: true, reason: `Command matches blocked pattern: ${pattern.source}` };
+    }
+  }
+  return { blocked: false };
+}
+
+// ─── Path safety ────────────────────────────────────────────────────────────
+
+function isSafePath(inputPath) {
+  const normalizedPath = normalize(inputPath);
+  // Reject paths containing .. after normalization (should already be resolved, but double-check)
+  if (normalizedPath.includes('..')) return false;
+  const fullPath = join(WORKING_DIR, normalizedPath);
+  const resolvedPath = resolve(fullPath);
+  // On Windows, compare case-insensitively
+  const compareA = process.platform === 'win32' ? resolvedPath.toLowerCase() : resolvedPath;
+  const compareB = process.platform === 'win32' ? WORKING_DIR.toLowerCase() : WORKING_DIR;
+  return compareA.startsWith(compareB + sep) || compareA === compareB;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function execCommand(cmd, timeout = MAX_TIMEOUT) {
   return new Promise((resolve) => {
@@ -121,14 +182,9 @@ function execCommand(cmd, timeout = MAX_TIMEOUT) {
   });
 }
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
-
-function json(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json', ...CORS_HEADERS });
+function json(res, status, data, req) {
+  const headers = { 'Content-Type': 'application/json', ...corsHeaders(req) };
+  res.writeHead(status, headers);
   res.end(JSON.stringify(data));
 }
 
@@ -138,12 +194,12 @@ async function readBody(req) {
   return body;
 }
 
-// ─── Server ──────────────────────────────────────────────────────────────────
+// ─── Server ─────────────────────────────────────────────────────────────────
 
 const server = createServer(async (req, res) => {
   // CORS preflight
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, CORS_HEADERS);
+    res.writeHead(204, corsHeaders(req));
     return res.end();
   }
 
@@ -153,112 +209,111 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/agent' && req.method === 'GET') {
     const authed = isAuthorized(req);
 
-    // Rotate temp token on every unauthenticated check so the console
-    // always shows a fresh code the client can use.
     if (!authed) {
-      tempToken = generateToken(6);
+      tempToken = generateToken(8);
       console.log(`\n[agent] ─── Fresh temp connect token ───`);
       console.log(`[agent]   ${tempToken}`);
       console.log(`[agent] ────────────────────────────────\n`);
     }
 
-    return json(res, 200, {
-      status: 'ok',
-      needsAuth: !authed,
-    });
+    return json(res, 200, { status: 'ok', needsAuth: !authed }, req);
   }
 
   // ── Token exchange (connect) ───────────────────────────────────────────
   if (url.pathname === '/agent/connect' && req.method === 'POST') {
+    const clientIp = req.socket.remoteAddress;
+    if (isRateLimited(`connect:${clientIp}`, 5, 60_000)) {
+      return json(res, 429, { error: 'Too many connect attempts. Try again later.' }, req);
+    }
+
     const body = await readBody(req);
     let parsed;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      return json(res, 400, { error: 'Invalid JSON body' });
+    try { parsed = JSON.parse(body); } catch {
+      return json(res, 400, { error: 'Invalid JSON body' }, req);
     }
 
     const { token } = parsed;
     if (!token || typeof token !== 'string') {
-      return json(res, 400, { error: 'Missing or invalid "token" field' });
+      return json(res, 400, { error: 'Missing or invalid "token" field' }, req);
     }
 
-    // Validate the temp token
     if (token !== tempToken) {
-      return json(res, 403, { error: 'Invalid token. Check the server console for the correct token.' });
+      return json(res, 403, { error: 'Invalid token. Check the server console for the correct token.' }, req);
     }
 
-    // Temp token used — invalidate it and generate a fresh one for future connects
     const longLivedToken = generateToken(48);
     validTokens.add(longLivedToken);
     saveTokens();
 
-    // Regenerate temp token for next connect
-    tempToken = generateToken(6); // short & easy to type
+    tempToken = generateToken(8);
     console.log(`\n[agent] ─── New temp connect token ───`);
     console.log(`[agent]   ${tempToken}`);
     console.log(`[agent] ──────────────────────────────\n`);
 
-    console.log('[agent] Client authenticated successfully. Long-lived token issued.');
-    return json(res, 200, { token: longLivedToken });
+    console.log('[agent] Client authenticated successfully.');
+    return json(res, 200, { token: longLivedToken }, req);
   }
 
   // ── Execute command (requires auth) ────────────────────────────────────
   if (url.pathname === '/agent' && req.method === 'POST') {
     if (!isAuthorized(req)) {
-      return json(res, 401, { error: 'Unauthorized. Connect first to obtain a valid token.' });
+      return json(res, 401, { error: 'Unauthorized.' }, req);
+    }
+
+    const clientIp = req.socket.remoteAddress;
+    if (isRateLimited(`cmd:${clientIp}`, 30, 60_000)) {
+      return json(res, 429, { error: 'Too many commands. Slow down.' }, req);
     }
 
     const body = await readBody(req);
     let parsed;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      return json(res, 400, { error: 'Invalid JSON body' });
+    try { parsed = JSON.parse(body); } catch {
+      return json(res, 400, { error: 'Invalid JSON body' }, req);
     }
 
     const { cmd } = parsed;
     if (!cmd || typeof cmd !== 'string') {
-      return json(res, 400, { error: 'Missing or invalid "cmd" field' });
+      return json(res, 400, { error: 'Missing or invalid "cmd" field' }, req);
+    }
+
+    const validation = validateCommand(cmd);
+    if (validation.blocked) {
+      console.warn(`[agent] BLOCKED command: ${cmd} (${validation.reason})`);
+      return json(res, 403, { error: `Command blocked: ${validation.reason}` }, req);
     }
 
     console.log(`[agent] exec: ${cmd}`);
     const result = await execCommand(cmd);
     console.log(`[agent] exit code: ${result.code}`);
-    return json(res, 200, result);
+    return json(res, 200, result, req);
   }
 
   // ── List files (requires auth) ─────────────────────────────────────────
   if (url.pathname === '/agent/files' && req.method === 'GET') {
     if (!isAuthorized(req)) {
-      return json(res, 401, { error: 'Unauthorized. Connect first to obtain a valid token.' });
+      return json(res, 401, { error: 'Unauthorized.' }, req);
     }
 
     const searchParams = new URLSearchParams(url.search);
     const dirPath = searchParams.get('path') || '';
 
+    if (!isSafePath(dirPath)) {
+      return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
+    }
+
     try {
-      // Security: resolve the path and ensure it's within WORKING_DIR
       const normalizedPath = normalize(dirPath);
-      const fullPath = join(WORKING_DIR, normalizedPath);
-      const resolvedPath = resolve(fullPath);
+      const resolvedPath = resolve(join(WORKING_DIR, normalizedPath));
 
-      // Ensure the resolved path starts with WORKING_DIR (prevent directory traversal)
-      if (!resolvedPath.startsWith(WORKING_DIR)) {
-        return json(res, 403, { error: 'Access denied: Path outside working directory' });
-      }
-
-      // Check if the directory exists
       if (!existsSync(resolvedPath)) {
-        return json(res, 404, { error: 'Directory not found' });
+        return json(res, 404, { error: 'Directory not found' }, req);
       }
 
       const stats = statSync(resolvedPath);
       if (!stats.isDirectory()) {
-        return json(res, 400, { error: 'Not a directory' });
+        return json(res, 400, { error: 'Not a directory' }, req);
       }
 
-      // List directory contents
       const entries = readdirSync(resolvedPath, { withFileTypes: true });
       const files = entries.map((entry) => {
         const entryPath = join(resolvedPath, entry.name);
@@ -268,9 +323,7 @@ const server = createServer(async (req, res) => {
           const entryStats = statSync(entryPath);
           size = entryStats.size;
           lastModified = entryStats.mtimeMs;
-        } catch {
-          // Ignore errors for files we can't stat
-        }
+        } catch { /* ignore */ }
         return {
           id: `${entry.isDirectory() ? 'dir' : 'file'}-${normalizedPath}-${entry.name}`,
           name: entry.name,
@@ -282,241 +335,191 @@ const server = createServer(async (req, res) => {
         };
       });
 
-      // Return tree structure for root, array for subdirectories
       const result = normalizedPath === '.' || normalizedPath === ''
         ? { id: 'root', name: '/', type: 'directory', children: files }
         : files;
 
-      return json(res, 200, result);
+      return json(res, 200, result, req);
     } catch (err) {
       console.error(`[agent] Error listing files: ${err.message}`);
-      return json(res, 500, { error: 'Failed to list files' });
+      return json(res, 500, { error: 'Failed to list files' }, req);
     }
   }
 
   // ── Create file/directory (requires auth) ──────────────────────────────
   if (url.pathname === '/agent/files' && req.method === 'POST') {
     if (!isAuthorized(req)) {
-      return json(res, 401, { error: 'Unauthorized. Connect first to obtain a valid token.' });
+      return json(res, 401, { error: 'Unauthorized.' }, req);
     }
 
     const body = await readBody(req);
     let parsed;
-    try {
-      parsed = JSON.parse(body);
-    } catch {
-      return json(res, 400, { error: 'Invalid JSON body' });
+    try { parsed = JSON.parse(body); } catch {
+      return json(res, 400, { error: 'Invalid JSON body' }, req);
     }
 
     const { path, content, isDirectory } = parsed;
     if (!path || typeof path !== 'string') {
-      return json(res, 400, { error: 'Missing or invalid "path" field' });
+      return json(res, 400, { error: 'Missing or invalid "path" field' }, req);
+    }
+
+    if (!isSafePath(path)) {
+      return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
     }
 
     try {
-      const normalizedPath = normalize(path);
-      const fullPath = join(WORKING_DIR, normalizedPath);
-      const resolvedPath = resolve(fullPath);
-
-      // Ensure the resolved path starts with WORKING_DIR
-      if (!resolvedPath.startsWith(WORKING_DIR)) {
-        return json(res, 403, { error: 'Access denied: Path outside working directory' });
-      }
+      const resolvedPath = resolve(join(WORKING_DIR, normalize(path)));
 
       if (isDirectory) {
-        // Create directory
         mkdirSync(resolvedPath, { recursive: true });
-        return json(res, 200, { success: true, message: 'Directory created' });
+        return json(res, 200, { success: true, message: 'Directory created' }, req);
       } else {
-        // Create file - ensure parent directory exists
         const parentDir = join(resolvedPath, '..');
-        if (!existsSync(parentDir)) {
-          mkdirSync(parentDir, { recursive: true });
-        }
+        if (!existsSync(parentDir)) mkdirSync(parentDir, { recursive: true });
         writeFileSync(resolvedPath, content || '');
-        return json(res, 200, { success: true, message: 'File created' });
+        return json(res, 200, { success: true, message: 'File created' }, req);
       }
     } catch (err) {
       console.error(`[agent] Error creating file: ${err.message}`);
-      return json(res, 500, { error: 'Failed to create file' });
+      return json(res, 500, { error: 'Failed to create file' }, req);
     }
   }
 
   // ── Upload file (requires auth) ────────────────────────────────────────
   if (url.pathname === '/agent/files/upload' && req.method === 'POST') {
     if (!isAuthorized(req)) {
-      return json(res, 401, { error: 'Unauthorized. Connect first to obtain a valid token.' });
+      return json(res, 401, { error: 'Unauthorized.' }, req);
     }
 
     try {
-      // Parse multipart form data manually
       const contentType = req.headers['content-type'] || '';
       const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
       if (!boundaryMatch) {
-        return json(res, 400, { error: 'Invalid multipart form data' });
+        return json(res, 400, { error: 'Invalid multipart form data' }, req);
       }
 
       const boundary = `--${boundaryMatch[1] || boundaryMatch[2]}`;
       const body = await readBody(req);
-      
-      // Split by boundary
       const parts = body.split(boundary);
       let filePath = '';
       let fileContent = null;
 
       for (const part of parts) {
         if (!part.trim() || part === '--' || part === '-') continue;
-        
-        // Remove leading CRLF from boundary
         const cleanPart = part.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
-        
         const [headers, ...contentParts] = cleanPart.split(/\r?\n\r?\n/);
         const content = contentParts.join('\r\n\r\n');
-
-        // Parse headers
         const contentDisposition = headers.match(/Content-Disposition:\s*form-data;\s*(.*)/i);
         if (contentDisposition) {
           const nameMatch = contentDisposition[1].match(/name="([^"]+)"/);
           const filenameMatch = contentDisposition[1].match(/filename="([^"]+)"/);
-          
-          if (nameMatch && nameMatch[1] === 'path') {
-            filePath = content.trim();
-          }
-          if (filenameMatch) {
-            // Decode the file content (handle base64 or raw binary)
-            fileContent = Buffer.from(content.trim(), 'binary');
-          }
+          if (nameMatch && nameMatch[1] === 'path') filePath = content.trim();
+          if (filenameMatch) fileContent = Buffer.from(content.trim(), 'binary');
         }
       }
 
       if (!filePath && fileContent === null) {
-        return json(res, 400, { error: 'Missing file or path' });
+        return json(res, 400, { error: 'Missing file or path' }, req);
       }
 
-      const normalizedPath = normalize(filePath);
-      const fullPath = join(WORKING_DIR, normalizedPath);
-      const resolvedPath = resolve(fullPath);
-
-      // Ensure the resolved path starts with WORKING_DIR
-      if (!resolvedPath.startsWith(WORKING_DIR)) {
-        return json(res, 403, { error: 'Access denied: Path outside working directory' });
+      if (!isSafePath(filePath)) {
+        return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
       }
 
-      // Ensure parent directory exists
+      const resolvedPath = resolve(join(WORKING_DIR, normalize(filePath)));
       const parentDir = join(resolvedPath, '..');
-      if (!existsSync(parentDir)) {
-        mkdirSync(parentDir, { recursive: true });
-      }
-
+      if (!existsSync(parentDir)) mkdirSync(parentDir, { recursive: true });
       writeFileSync(resolvedPath, fileContent || '');
-      return json(res, 200, { success: true, message: 'File uploaded' });
+      return json(res, 200, { success: true, message: 'File uploaded' }, req);
     } catch (err) {
       console.error(`[agent] Error uploading file: ${err.message}`);
-      return json(res, 500, { error: 'Failed to upload file' });
+      return json(res, 500, { error: 'Failed to upload file' }, req);
     }
   }
 
   // ── Delete file/directory (requires auth) ──────────────────────────────
   if (url.pathname === '/agent/files' && req.method === 'DELETE') {
     if (!isAuthorized(req)) {
-      return json(res, 401, { error: 'Unauthorized. Connect first to obtain a valid token.' });
+      return json(res, 401, { error: 'Unauthorized.' }, req);
     }
 
     const searchParams = new URLSearchParams(url.search);
     const filePath = searchParams.get('path') || '';
 
     if (!filePath) {
-      return json(res, 400, { error: 'Missing "path" parameter' });
+      return json(res, 400, { error: 'Missing "path" parameter' }, req);
+    }
+
+    if (!isSafePath(filePath)) {
+      return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
     }
 
     try {
-      const normalizedPath = normalize(filePath);
-      const fullPath = join(WORKING_DIR, normalizedPath);
-      const resolvedPath = resolve(fullPath);
-
-      // Ensure the resolved path starts with WORKING_DIR
-      if (!resolvedPath.startsWith(WORKING_DIR)) {
-        return json(res, 403, { error: 'Access denied: Path outside working directory' });
-      }
-
-      // Check if the path exists
+      const resolvedPath = resolve(join(WORKING_DIR, normalize(filePath)));
       if (!existsSync(resolvedPath)) {
-        return json(res, 404, { error: 'File or directory not found' });
+        return json(res, 404, { error: 'File or directory not found' }, req);
       }
-
       const stats = statSync(resolvedPath);
       if (stats.isDirectory()) {
-        // Remove directory recursively
         rmdirSync(resolvedPath, { recursive: true });
       } else {
-        // Remove file
         unlinkSync(resolvedPath);
       }
-
-      return json(res, 200, { success: true, message: 'Deleted successfully' });
+      return json(res, 200, { success: true, message: 'Deleted successfully' }, req);
     } catch (err) {
       console.error(`[agent] Error deleting file: ${err.message}`);
-      return json(res, 500, { error: 'Failed to delete file' });
+      return json(res, 500, { error: 'Failed to delete file' }, req);
     }
   }
 
   // ── Download file (requires auth) ──────────────────────────────────────
   if (url.pathname === '/agent/files/download' && req.method === 'GET') {
     if (!isAuthorized(req)) {
-      return json(res, 401, { error: 'Unauthorized. Connect first to obtain a valid token.' });
+      return json(res, 401, { error: 'Unauthorized.' }, req);
     }
 
     const searchParams = new URLSearchParams(url.search);
     const filePath = searchParams.get('path') || '';
 
     if (!filePath) {
-      return json(res, 400, { error: 'Missing "path" parameter' });
+      return json(res, 400, { error: 'Missing "path" parameter' }, req);
+    }
+
+    if (!isSafePath(filePath)) {
+      return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
     }
 
     try {
-      const normalizedPath = normalize(filePath);
-      const fullPath = join(WORKING_DIR, normalizedPath);
-      const resolvedPath = resolve(fullPath);
-
-      // Ensure the resolved path starts with WORKING_DIR
-      if (!resolvedPath.startsWith(WORKING_DIR)) {
-        return json(res, 403, { error: 'Access denied: Path outside working directory' });
-      }
-
-      // Check if the path exists and is a file
+      const resolvedPath = resolve(join(WORKING_DIR, normalize(filePath)));
       if (!existsSync(resolvedPath)) {
-        return json(res, 404, { error: 'File not found' });
+        return json(res, 404, { error: 'File not found' }, req);
       }
-
       const stats = statSync(resolvedPath);
       if (stats.isDirectory()) {
-        return json(res, 400, { error: 'Cannot download a directory' });
+        return json(res, 400, { error: 'Cannot download a directory' }, req);
       }
-
       const fileData = readFileSync(resolvedPath);
-      const fileName = join(normalizedPath).split(/[\\/]/).pop();
-      
+      const fileName = normalize(filePath).split(/[\\/]/).pop();
       res.writeHead(200, {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="${fileName}"`,
-        ...CORS_HEADERS,
+        ...corsHeaders(req),
       });
       res.end(fileData);
     } catch (err) {
       console.error(`[agent] Error downloading file: ${err.message}`);
-      return json(res, 500, { error: 'Failed to download file' });
+      return json(res, 500, { error: 'Failed to download file' }, req);
     }
   }
 
   // ── Serve static frontend assets ──────────────────────────────────────
-  let filePath = join(STATIC_DIR, url.pathname === '/' ? 'index.html' : url.pathname);
-  if (serveStatic(res, filePath)) return;
+  let staticPath = join(STATIC_DIR, url.pathname === '/' ? 'index.html' : url.pathname);
+  if (serveStatic(res, staticPath)) return;
 
-  // SPA fallback — serve index.html for unmatched routes
-  filePath = join(STATIC_DIR, 'index.html');
-  if (serveStatic(res, filePath)) return;
+  staticPath = join(STATIC_DIR, 'index.html');
+  if (serveStatic(res, staticPath)) return;
 
-  json(res, 404, { error: 'Not found' });
+  json(res, 404, { error: 'Not found' }, req);
 });
 
 // ─── Start ───────────────────────────────────────────────────────────────────
@@ -524,9 +527,7 @@ const server = createServer(async (req, res) => {
 loadTokens();
 
 server.listen(PORT, () => {
-  // make sure working directory exists
   try {
-    // mkdir -p
     if (!existsSync(WORKING_DIR)) {
       mkdirSync(WORKING_DIR, { recursive: true });
       console.log(`[agent] Created working directory at ${WORKING_DIR}`);
@@ -536,4 +537,5 @@ server.listen(PORT, () => {
   }
 
   console.log(`[agent] Server listening on http://localhost:${PORT}/agent`);
+  console.log(`[agent] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
 });

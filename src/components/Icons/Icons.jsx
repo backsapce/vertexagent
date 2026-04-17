@@ -1,4 +1,3 @@
-import React from 'react';
 
 // Base Icon component with common props
 const IconBase = ({ children, width, height, viewBox, className, ...props }) => (
@@ -31,11 +30,6 @@ export const ChevronDown = ({ width = 14, height = 14, className = '' }) => (
   </IconBase>
 );
 
-export const ChevronLeft = ({ width = 14, height = 14, className = '' }) => (
-  <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
-    <polyline points="15 18 9 12 15 6" />
-  </IconBase>
-);
 
 // File & Folder Icons
 export const Folder = ({ width = 18, height = 18, className = '' }) => (
@@ -144,12 +138,6 @@ export const Lock = ({ width = 18, height = 18, className = '' }) => (
   </IconBase>
 );
 
-export const Unlock = ({ width = 18, height = 18, className = '' }) => (
-  <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
-    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-    <path d="M7 11V7a5 5 0 0 1 9.9-1" />
-  </IconBase>
-);
 
 // Appearance & Theme Icons
 export const Sun = ({ width = 20, height = 20, className = '' }) => (
@@ -289,26 +277,5 @@ export const WifiOff = ({ width = 16, height = 16, className = '' }) => (
 );
 
 // Image & Attachment Icons
-export const Image = ({ width = 20, height = 20, className = '' }) => (
-  <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
-    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-    <circle cx="8.5" cy="8.5" r="1.5" />
-    <polyline points="21 15 16 10 5 21" />
-  </IconBase>
-);
 
 // Empty State Icons
-export const Inbox = ({ width = 48, height = 48, className = '' }) => (
-  <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
-    <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-    <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-  </IconBase>
-);
-
-export const Archive = ({ width = 48, height = 48, className = '' }) => (
-  <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
-    <polyline points="21 8 21 21 3 21 3 8" />
-    <rect x="1" y="3" width="22" height="5" />
-    <line x1="10" y1="12" x2="14" y2="12" />
-  </IconBase>
-);

@@ -22,10 +22,3 @@ export async function loadSettings() {
 export async function saveSettings(settings) {
   await config.merge('llm', settings);
 }
-
-/**
- * Clear all LLM settings from config.yaml.
- */
-export async function clearSettings() {
-  await config.set('llm', null);
-}

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
+import { readFileContent, saveFileContent } from '../../vfs/opfs';
+import { downloadRemoteFile, createRemoteFile } from '../../models/agent';
 import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
@@ -80,29 +82,24 @@ const FileEditor = ({ show, onClose, fileName, filePath, fileSource, onSave }) =
     if (show && fileName && isEditable) {
       loadFileContent();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show, fileName, filePath, fileSource]);
 
   const loadFileContent = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
       let fileContent;
-      
+
       if (fileSource === 'local') {
-        // Import dynamically to avoid circular dependency
-        const { readFileContent } = await import('../../vfs/opfs');
         fileContent = await readFileContent(fileName, filePath);
       } else {
-        // Remote file - fetch from agent server
         const path = filePath ? `${filePath}/${fileName}` : fileName;
-        const response = await fetch(`${window.location.origin}/api/files/${encodeURIComponent(path)}`);
-        if (!response.ok) {
-          throw new Error('Failed to fetch remote file');
-        }
-        fileContent = await response.text();
+        const blob = await downloadRemoteFile(path, window.location.origin);
+        fileContent = await blob.text();
       }
-      
+
       setContent(fileContent || '');
       setOriginalContent(fileContent || '');
       setIsDirty(false);
@@ -119,32 +116,21 @@ const FileEditor = ({ show, onClose, fileName, filePath, fileSource, onSave }) =
   const handleSave = useCallback(async () => {
     setSaving(true);
     setError(null);
-    
+
     try {
       if (fileSource === 'local') {
-        const { saveFileContent } = await import('../../vfs/opfs');
         await saveFileContent(fileName, content, filePath);
       } else {
-        // Remote file - upload to agent server
         const path = filePath ? `${filePath}/${fileName}` : fileName;
-        const response = await fetch(`${window.location.origin}/api/files/${encodeURIComponent(path)}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'text/plain',
-          },
-          body: content,
-        });
-        if (!response.ok) {
-          throw new Error('Failed to save remote file');
-        }
+        await createRemoteFile(path, content, false, window.location.origin);
       }
-      
+
       setOriginalContent(content);
       setIsDirty(false);
-      
+
       // Notify parent to refresh file list
       onSave?.();
-      
+
       // Show success feedback
       const successMsg = document.createElement('div');
       successMsg.className = 'file-save-success';

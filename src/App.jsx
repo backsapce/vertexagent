@@ -5,7 +5,7 @@ import FileManage from './components/FileManage/FileManage';
 import { loadChats, saveChats, clearAll, deleteChat as deleteChatFile } from './vfs/opfs';
 import config from './config/config';
 import llm from './models/llm';
-import { checkAgentAvailable, executeCommand } from './models/agent';
+import { executeCommand, initAgents } from './models/agent';
 import { I18nProvider } from './i18n/index';
 import { useI18n } from './i18n/context';
 import { WifiOff } from './components/Icons/Icons';
@@ -60,6 +60,7 @@ function App() {
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [initError, setInitError] = useState(null);
   const [_llmReady, setLlmReady] = useState(false); // triggers re-render on config change
   const [streaming, setStreaming] = useState(false);
   const [theme, setTheme] = useState('system'); // 'light' | 'dark' | 'system'
@@ -95,74 +96,24 @@ function App() {
         return Promise.all([
           loadChats()
             .then((saved) => { if (saved.length) setChats(saved); })
-            .catch((err) => console.warn('OPFS load failed:', err)),
+            .catch((err) => { console.error('OPFS load failed:', err); setInitError('Failed to load chats'); }),
           llm.init()
             .then(() => setLlmReady(true))
-            .catch((err) => console.warn('LLM init failed:', err)),
+            .catch((err) => { console.error('LLM init failed:', err); }),
         ]);
       })
-      .catch((err) => console.warn('Config init failed:', err))
+      .catch((err) => {
+        console.error('Config init failed:', err);
+        setInitError(err.message || 'Failed to load configuration');
+      })
       .finally(() => setLoaded(true));
 
-    // Load saved agents from config, auto-detect local agent
-    // (config.init() above must resolve first, but we await it indirectly)
-    (async () => {
-      // Wait until config is initialized
-      while (!config.initialized) await new Promise((r) => setTimeout(r, 50));
-
-      // Load saved agents from config
-      const savedAgents = config.get('agents') || [];
-      const detected = [];
-
-      // Auto-detect local /agent (skip if user previously dismissed it)
-      const dismissed = config.get('dismissedAgents') || [];
-      const localCheck = await checkAgentAvailable();
-      const localUrl = window.location.origin;
-      const hasLocal = savedAgents.some((a) => a.url === localUrl);
-      const wasDismissed = dismissed.includes(localUrl);
-      if (localCheck.available && !hasLocal && !wasDismissed) {
-        const status = localCheck.needsAuth ? 'needsAuth' : 'connected';
-        detected.push({ url: localUrl, name: 'Local Agent', status });
-      }
-
-      // Check saved agents connectivity
-      const checked = await Promise.all(
-        savedAgents.map(async (a) => {
-          const info = await checkAgentAvailable(a.url);
-          let status = 'disconnected';
-          if (info.available && !info.needsAuth) status = 'connected';
-          else if (info.available && info.needsAuth) status = 'needsAuth';
-          return { ...a, status };
-        })
-      );
-
-      // Mark local agent if it was already saved
-      if (localCheck.available && hasLocal) {
-        for (const a of checked) {
-          if (a.url === localUrl) a.status = localCheck.needsAuth ? 'needsAuth' : 'connected';
-        }
-      }
-
-      const allAgents = [...detected, ...checked];
+    // Initialize agents after config is ready
+    initAgents().then(({ agents: allAgents, selectedUrl }) => {
       setAgents(allAgents);
-
-      // Auto-select first connected agent
-      const savedSelected = config.get('selectedAgent');
-      const connected = allAgents.filter((a) => a.status === 'connected');
-      if (savedSelected && connected.some((a) => a.url === savedSelected)) {
-        setSelectedAgentUrl(savedSelected);
-        selectedAgentRef.current = savedSelected;
-      } else if (connected.length > 0) {
-        setSelectedAgentUrl(connected[0].url);
-        selectedAgentRef.current = connected[0].url;
-      }
-
-      // Persist any newly detected agents
-      if (detected.length > 0) {
-        const toSave = allAgents.map(({ url, name }) => ({ url, name }));
-        await config.set('agents', toSave);
-      }
-    })();
+      setSelectedAgentUrl(selectedUrl);
+      selectedAgentRef.current = selectedUrl;
+    }).catch((err) => console.warn('Agent init failed:', err));
   }, []);
 
   // Debounced save to OPFS whenever chats change
@@ -489,7 +440,14 @@ function App() {
   }, []);
 
   if (!loaded) {
-    return <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
+    return <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+      {initError ? (
+        <>
+          <p style={{ color: '#e53935', margin: 0 }}>Initialization failed: {initError}</p>
+          <button onClick={() => window.location.reload()} style={{ marginTop: 16, padding: '8px 16px', borderRadius: 6, border: '1px solid #ccc', background: '#fff', cursor: 'pointer' }}>Reload</button>
+        </>
+      ) : 'Loading...'}
+    </div>;
   }
 
   return (
@@ -506,6 +464,16 @@ function App() {
       <MessagePanel
         messages={messages}
         onSendMessage={handleSendMessage}
+        onRetry={() => {
+          const chatId = activeChatId;
+          const chat = chats.find((c) => c.id === chatId);
+          if (!chat) return;
+          const lastUserIdx = chat.messages.reduce((acc, m, i) => m.role === 'user' ? i : acc, -1);
+          if (lastUserIdx === -1) return;
+          const trimmed = chat.messages.slice(0, lastUserIdx + 1);
+          setChats((prev) => prev.map((c) => c.id === chatId ? { ...c, messages: trimmed } : c));
+          setTimeout(() => streamResponse(chatId, trimmed), 0);
+        }}
         streaming={streaming}
         onStopStreaming={handleStopStreaming}
         llmConfig={llm.getActiveConfig()}

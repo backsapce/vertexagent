@@ -5,6 +5,7 @@ import FileManage from '../FileManage/FileManage';
 import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, Battery } from '../Icons/Icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
 import './MessagePanel.css';
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4 MB target (well under 10 MB API limit)
@@ -146,6 +147,7 @@ const ToolBlock = ({ toolCall }) => {
 const MessagePanel = ({
   messages,
   onSendMessage,
+  onRetry,
   streaming,
   onStopStreaming,
   llmConfig,
@@ -305,7 +307,10 @@ const MessagePanel = ({
                   msg.toolCalls.map((tc, i) => <ToolBlock key={i} toolCall={tc} />)
                 )}
                 <div className="message-text">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.toolCalls?.length > 0 ? msg.content.replace(/<execute>[\s\S]*?<\/execute>/g, '').trim() : msg.content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{msg.toolCalls?.length > 0 ? msg.content.replace(/<execute>[\s\S]*?<\/execute>/g, '').trim() : msg.content}</ReactMarkdown>
+                  {msg.role === 'assistant' && msg.content?.startsWith('Error:') && !streaming && onRetry && (
+                    <button className="retry-btn" onClick={() => onRetry()} title={t('message.retry')}>Retry</button>
+                  )}
                 </div>
               </div>
             </div>

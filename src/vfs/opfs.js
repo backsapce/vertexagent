@@ -96,7 +96,7 @@ async function writeText(dirHandle, filename, content) {
 async function deleteEntry(dirHandle, filename) {
   try {
     await dirHandle.removeEntry(filename);
-  } catch {}
+  } catch (_e) { /* ignore */ }
 }
 
 /**
@@ -146,34 +146,13 @@ export async function saveChats(chats) {
   await writeJSON(
     root,
     CHATS_FILE,
-    chats.map(({ messages, ...rest }) => rest)
+    chats.map(({ messages: _messages, ...rest }) => rest)
   );
 
   // Save messages in parallel
   await Promise.all(
     chats.map((chat) => writeJSON(msgsDir, `${chat.id}.json`, chat.messages))
   );
-}
-
-/**
- * Save a single chat.
- * @param {Array} chats - All chats
- * @param {string} chatId - ID of chat to save
- */
-export async function saveChat(chats, chatId) {
-  const root = await getRootDir();
-  const msgsDir = await getDirectory(MESSAGES_DIR);
-
-  await writeJSON(
-    root,
-    CHATS_FILE,
-    chats.map(({ messages, ...rest }) => rest)
-  );
-
-  const chat = chats.find((c) => c.id === chatId);
-  if (chat) {
-    await writeJSON(msgsDir, `${chatId}.json`, chat.messages);
-  }
 }
 
 /**
@@ -190,7 +169,7 @@ export async function deleteChat(chats, chatId) {
   await writeJSON(
     root,
     CHATS_FILE,
-    remaining.map(({ messages, ...rest }) => rest)
+    remaining.map(({ messages: _messages, ...rest }) => rest)
   );
   await deleteEntry(msgsDir, `${chatId}.json`);
 
@@ -204,7 +183,7 @@ export async function clearAll() {
   const root = await navigator.storage.getDirectory();
   try {
     await root.removeEntry(ROOT_DIR, { recursive: true });
-  } catch {}
+  } catch (_e) { /* ignore */ }
 }
 
 // ─── Export/Import ────────────────────────────────────────────────────────────
@@ -238,7 +217,6 @@ export async function exportToZip() {
  */
 export async function importFromZip(blob) {
   const zip = await JSZip.loadAsync(blob);
-  const root = await getRootDir();
 
   for (const [path, file] of Object.entries(zip.files)) {
     if (file.dir) continue;
