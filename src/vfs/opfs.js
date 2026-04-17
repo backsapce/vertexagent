@@ -298,13 +298,14 @@ export async function loadFiles(dirName) {
  */
 
 /**
- * Save a file to the uploads directory.
- * @param {string} fileName
- * @param {Blob} blob
+ * Save a file to a directory.
+ * @param {string} fileName - Name of the file
+ * @param {Blob} blob - The file blob
+ * @param {string} [dirName] - Directory name relative to root (undefined for 'files' default)
  */
-export async function saveFile(fileName, blob) {
-  const filesDir = await getDirectory('files');
-  await writeText(filesDir, fileName, blob);
+export async function saveFile(fileName, blob, dirName) {
+  const dir = dirName ? await getDirectory(dirName) : await getDirectory('files');
+  await writeText(dir, fileName, blob);
 }
 
 /**
@@ -361,4 +362,29 @@ export async function createFile(fileName, dirName) {
 export async function createDirectory(dirName, parentDirName) {
   const parentDir = parentDirName ? await getDirectory(parentDirName) : await getRootDir();
   await parentDir.getDirectoryHandle(dirName, { create: true });
+}
+
+/**
+ * Read text content from a file.
+ * @param {string} fileName - Name of the file to read
+ * @param {string} [dirName] - Directory name relative to root (undefined for root)
+ * @returns {Promise<string>}
+ */
+export async function readFileContent(fileName, dirName) {
+  const dir = dirName ? await getDirectory(dirName) : await getRootDir();
+  const fileHandle = await dir.getFileHandle(fileName);
+  const file = await fileHandle.getFile();
+  return await file.text();
+}
+
+/**
+ * Save text content to a file.
+ * @param {string} fileName - Name of the file to save
+ * @param {string} content - Text content to save
+ * @param {string} [dirName] - Directory name relative to root (undefined for root)
+ * @returns {Promise<void>}
+ */
+export async function saveFileContent(fileName, content, dirName) {
+  const dir = dirName ? await getDirectory(dirName) : await getRootDir();
+  await writeText(dir, fileName, content);
 }

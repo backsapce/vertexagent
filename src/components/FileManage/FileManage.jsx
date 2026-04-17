@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useI18n } from '../../i18n/context';
 import { loadFiles, saveFile, createFile, createDirectory, deleteFile as deleteLocalFile, getFileBlob } from '../../vfs/opfs';
 import { listRemoteFiles, createRemoteFile, deleteRemoteFile, uploadRemoteFile, downloadRemoteFile } from '../../models/agent';
-import { ChevronRight, Folder, File, FilePlus, FolderPlus, Refresh, X, Upload, Cloud, HardDrive, Trash, Download } from '../Icons/Icons';
+import { ChevronRight, Folder, File, FilePlus, FolderPlus, Refresh, X, Upload, Cloud, HardDrive, Trash, Download, FileEdit } from '../Icons/Icons';
+import FileEditor from './FileEditor';
 import './FileManage.css';
 
 const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => {
@@ -15,8 +16,14 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   const [loading, setLoading] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [error, setError] = useState(null);
+  const [selectedPath, setSelectedPath] = useState(null); // Selected upload target path
+  const [selectedName, setSelectedName] = useState(null); // Selected item name for display
   const fileInputRef = useRef(null);
   const dropZoneRef = useRef(null);
+  
+  // File editor state
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingFile, setEditingFile] = useState(null);
 
   // Load files when shown, source changes, or refreshTrigger changes
   useEffect(() => {
@@ -58,44 +65,81 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   }, [expandedDirs]);
 
   // Handle file upload via input (local)
-  const handleLocalFileUpload = useCallback(async (files) => {
+  const handleLocalFileUpload = useCallback(async (files, targetPath) => {
     if (!files || files.length === 0) return;
     
     setUploading(true);
     const fileArray = Array.from(files);
+    let successCount = 0;
+    let failCount = 0;
     
     try {
       for (const file of fileArray) {
-        await saveFile(file.name, file);
+        try {
+          await saveFile(file.name, file, targetPath || undefined);
+          successCount++;
+        } catch (fileErr) {
+          console.warn('Failed to upload file:', fileErr);
+          failCount++;
+        }
       }
-      const rootDir = await loadFiles();
+      // Always reload from root to get the complete tree
+      const rootDir = await loadFiles(undefined);
       setFileTree({
         ...rootDir,
         expanded: true,
       });
+      
+      // Show success/failure report
+      if (successCount > 0 && failCount === 0) {
+        alert(t('filemanage.uploadSuccess').replace('{count}', successCount));
+      } else if (successCount > 0 && failCount > 0) {
+        alert(t('filemanage.uploadPartialSuccess').replace('{success}', successCount).replace('{fail}', failCount));
+      } else {
+        alert(t('filemanage.uploadLocalError'));
+      }
     } catch (err) {
       console.warn('Failed to upload file:', err);
+      alert(t('filemanage.uploadLocalError'));
     } finally {
       setUploading(false);
     }
-  }, []);
+  }, [t]);
 
   // Handle file upload to remote
-  const handleRemoteFileUpload = useCallback(async (files) => {
+  const handleRemoteFileUpload = useCallback(async (files, targetPath) => {
     if (!files || files.length === 0) return;
     
     setUploading(true);
     const fileArray = Array.from(files);
+    let successCount = 0;
+    let failCount = 0;
     
     try {
       for (const file of fileArray) {
-        await uploadRemoteFile(file.name, file, window.location.origin);
+        try {
+          const uploadPath = targetPath ? `${targetPath}/${file.name}` : file.name;
+          await uploadRemoteFile(uploadPath, file, window.location.origin);
+          successCount++;
+        } catch (fileErr) {
+          console.warn('Failed to upload remote file:', fileErr);
+          failCount++;
+        }
       }
       const rootDir = await listRemoteFiles('', window.location.origin);
       setFileTree({
         ...rootDir,
         expanded: true,
       });
+      
+      // Show success/failure report
+      if (successCount > 0 && failCount === 0) {
+        alert(t('filemanage.uploadSuccess').replace('{count}', successCount));
+      } else if (successCount > 0 && failCount > 0) {
+        alert(t('filemanage.uploadPartialSuccess').replace('{success}', successCount).replace('{fail}', failCount));
+      } else {
+        alert(t('filemanage.uploadRemoteError'));
+      }
     } catch (err) {
       console.warn('Failed to upload remote file:', err);
       alert(t('filemanage.uploadRemoteError'));
@@ -104,20 +148,25 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
     }
   }, [t]);
 
-  const handleFileUpload = useCallback((files) => {
+  const handleFileUpload = useCallback(async (files, targetPath) => {
     if (fileSource === 'local') {
-      handleLocalFileUpload(files);
+      await handleLocalFileUpload(files, targetPath);
     } else {
-      handleRemoteFileUpload(files);
+      await handleRemoteFileUpload(files, targetPath);
     }
   }, [fileSource, handleLocalFileUpload, handleRemoteFileUpload]);
 
-  const handleFileInputChange = useCallback((e) => {
-    handleFileUpload(e.target.files);
+  const handleFileInputChange = useCallback(async (e) => {
+    const files = e.target.files;
+    if (fileSource === 'local') {
+      await handleLocalFileUpload(files, selectedPath);
+    } else {
+      await handleRemoteFileUpload(files, selectedPath);
+    }
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [handleFileUpload, fileSource]);
+  }, [fileSource, selectedPath, handleLocalFileUpload, handleRemoteFileUpload]);
 
   // Handle drag and drop
   useEffect(() => {
@@ -366,16 +415,58 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
     }
   }, [t, fileSource]);
 
+  // Edit file handler
+  const handleEditFile = useCallback((fileName, filePath) => {
+    setEditingFile({ fileName, filePath });
+    setEditorOpen(true);
+  }, []);
+
+  const handleEditorClose = useCallback(() => {
+    setEditorOpen(false);
+    setEditingFile(null);
+  }, []);
+
+  // Select item as upload target - build full path to selected item
+  const handleSelectItem = useCallback((path, name, isDirectory) => {
+    // Build the full path for upload target
+    // When selecting a directory, files upload TO that directory
+    // When selecting a file, files upload to the same directory as that file
+    const fullPath = path ? `${path}/${name}` : name;
+    setSelectedPath(fullPath);
+    setSelectedName(name);
+  }, []);
+
+  // Clear selection
+  const handleClearSelection = useCallback(() => {
+    setSelectedPath(null);
+    setSelectedName(null);
+  }, []);
+
+  const handleEditorSave = useCallback(() => {
+    // Refresh file list after save
+    handleRefresh();
+  }, [handleRefresh]);
+
   const renderTreeNode = (node, depth = 0, parentDir = '') => {
     if (node.type === 'directory') {
       const isExpanded = expandedDirs.has(node.id);
+      const isSelected = selectedPath === node.parentDir && selectedName === node.name;
+      // Build the full path for this directory
+      const dirPath = parentDir ? `${parentDir}/${node.name}` : node.name;
+      
       return (
-        <div key={node.id} className="tree-node directory-node" style={{ paddingLeft: depth * 16 }}>
+        <div key={node.id} className={`tree-node directory-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 16 }}>
           <div
             className="tree-item"
             onClick={(e) => {
               e.stopPropagation();
+              handleSelectItem(parentDir || '', node.name, true);
               toggleDirectory(node.id, node.name, parentDir || node.parentDir);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleSelectItem(parentDir || '', node.name, true);
             }}
           >
             <ChevronRight
@@ -389,23 +480,47 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
             {isExpanded && node.children && node.children.length > 0 && (
               <span className="tree-count">({node.children.length})</span>
             )}
+            {isSelected && <span className="tree-selected-badge">✓</span>}
           </div>
           {isExpanded && node.children && (
             <div className="tree-children">
-              {node.children.map((child) => renderTreeNode(child, depth + 1, node.path || parentDir))}
+              {node.children.map((child) => renderTreeNode(child, depth + 1, dirPath))}
             </div>
           )}
         </div>
       );
     } else {
+      const isSelected = selectedPath === node.parentDir && selectedName === node.name;
       return (
-        <div key={node.id} className="tree-node file-node" style={{ paddingLeft: depth * 16 + 12 }}>
-          <div className="tree-item file-item">
+        <div key={node.id} className={`tree-node file-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 16 + 12 }}>
+          <div 
+            className="tree-item file-item"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSelectItem(node.parentDir || '', node.name, false);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleSelectItem(node.parentDir || '', node.name, false);
+            }}
+          >
             <span className="tree-icon-spacer" />
             <File className="tree-icon file-icon" width={18} height={18} />
             <span className="tree-label">{node.name}</span>
             {node.size && <span className="tree-size">{formatFileSize(node.size)}</span>}
+            {isSelected && <span className="tree-selected-badge">✓</span>}
             <div className="file-actions">
+              <button
+                className="file-action-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleEditFile(node.name, node.parentDir);
+                }}
+                title={t('filemanage.edit')}
+              >
+                <FileEdit width={16} height={16} />
+              </button>
               <button
                 className="file-action-btn"
                 onClick={(e) => {
@@ -511,54 +626,44 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
           )}
         </div>
 
-        {/* Upload Zone - only show for local files */}
-        {fileSource === 'local' && (
-          <div className="filemanage-upload-zone">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              style={{ display: 'none' }}
-              onChange={handleFileInputChange}
-            />
-            <button
-              className="filemanage-upload-btn"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-            >
-              <Upload width={20} height={20} />
-              {uploading ? t('filemanage.uploading') : t('filemanage.upload')}
-            </button>
-            <span className="filemanage-drop-hint">{t('filemanage.dropHint')}</span>
-          </div>
-        )}
-        
-        {fileSource === 'remote' && (
-          <div className="filemanage-upload-zone">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              style={{ display: 'none' }}
-              onChange={handleFileInputChange}
-            />
-            <button
-              className="filemanage-upload-btn"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-            >
-              <Upload width={20} height={20} />
-              {uploading ? t('filemanage.uploading') : t('filemanage.upload')}
-            </button>
-            <span className="filemanage-drop-hint">{t('filemanage.dropHint')}</span>
-          </div>
-        )}
+        {/* Upload Zone */}
+        <div className="filemanage-upload-zone">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={handleFileInputChange}
+          />
+          <button
+            className="filemanage-upload-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          >
+            <Upload width={20} height={20} />
+            {uploading ? t('filemanage.uploading') : t('filemanage.upload')}
+          </button>
+          <span className="filemanage-drop-hint">{t('filemanage.dropHint')}</span>
+          {selectedName && (
+            <span className="filemanage-selected-hint">{t('filemanage.selectedHint').replace('{name}', selectedName)}</span>
+          )}
+        </div>
       </div>
 
       {/* Resize Handle */}
       <div
         className={`filemanage-resize-handle ${isResizing ? 'resizing' : ''}`}
         onMouseDown={handleMouseDown}
+      />
+
+      {/* File Editor Modal */}
+      <FileEditor
+        show={editorOpen}
+        onClose={handleEditorClose}
+        fileName={editingFile?.fileName}
+        filePath={editingFile?.filePath}
+        fileSource={fileSource}
+        onSave={handleEditorSave}
       />
     </div>
   );

@@ -106,24 +106,6 @@ async function persist() {
   await writeFile(dir, CONFIG_FILE, text);
 }
 
-// ─── Migrate legacy llm-settings.json → config.yaml ────────────────────────
-
-async function migrateLegacy(dir) {
-  try {
-    const fh = await dir.getFileHandle('llm-settings.json');
-    const file = await fh.getFile();
-    const text = await file.text();
-    const legacy = JSON.parse(text);
-    if (legacy && typeof legacy === 'object') {
-      _data.llm = { ..._data.llm, ...legacy };
-      await persist();
-      // Remove the old file after successful migration
-      await dir.removeEntry('llm-settings.json');
-    }
-  } catch {
-    // No legacy file — nothing to migrate
-  }
-}
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -147,8 +129,6 @@ const config = {
       _data = {};
     }
 
-    // One-time migration from legacy llm-settings.json
-    await migrateLegacy(dir);
 
     _initialized = true;
     return structuredClone(_data);

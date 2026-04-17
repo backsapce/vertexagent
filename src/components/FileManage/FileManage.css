@@ -235,6 +235,25 @@
   margin-left: 4px;
 }
 
+/* Selected item styles */
+.tree-node.selected > .tree-item {
+  background-color: var(--bg-selected, rgba(0, 123, 255, 0.15));
+  border: 1px solid var(--color-primary, #007bff);
+}
+
+.tree-selected-badge {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--color-primary, #007bff);
+  font-weight: bold;
+}
+
+.filemanage-selected-hint {
+  font-size: 12px;
+  color: var(--color-primary, #007bff);
+  margin-top: 4px;
+}
+
 /* File item with actions */
 .file-item {
   position: relative;
@@ -275,6 +294,16 @@
   color: var(--color-error, #d32f2f);
 }
 
+.file-action-btn.edit-btn:hover {
+  background-color: var(--bg-hover, #e3f2fd);
+  color: var(--color-primary, #007bff);
+}
+
+[data-theme="dark"] .file-action-btn.edit-btn:hover {
+  background-color: rgba(33, 150, 243, 0.2);
+  color: #64b5f6;
+}
+
 [data-theme="dark"] .file-action-btn.delete-btn:hover {
   background-color: rgba(211, 47, 47, 0.2);
   color: #ef5350;
@@ -290,6 +319,63 @@
   align-items: center;
   gap: 8px;
 }
+
+/* Upload Target Display */
+.filemanage-upload-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: var(--bg-secondary, #f5f5f5);
+  border-radius: 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.upload-target-label {
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+  font-weight: 500;
+}
+
+.upload-target-path {
+  font-size: 12px;
+  color: var(--text-primary, #333);
+  font-family: monospace;
+  background-color: var(--bg-primary, #fff);
+  padding: 4px 8px;
+  border-radius: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-target-default {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  font-style: italic;
+}
+
+.upload-target-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-secondary, #666);
+  transition: all 0.15s ease;
+}
+
+.upload-target-clear:hover {
+  background-color: var(--bg-hover, #e0e0e0);
+  color: var(--color-error, #d32f2f);
+}
+
 
 .filemanage-upload-btn {
   display: flex;
