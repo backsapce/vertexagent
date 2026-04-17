@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react'
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs'
 import { resolve, join, relative } from 'path'
 
+// GitHub Pages base path — set via VITE_BASE env var.
+//   VITE_BASE=/VertexAgent/ npm run build:pages → GitHub Pages
+//   npm run build                                  → normal (no prefix)
+const GH_PAGES_BASE = process.env.VITE_BASE || '/'
+
 /**
  * Vite plugin: generate service worker with precache manifest.
  * After build, scans dist/ for all emitted files and injects them
@@ -23,15 +28,15 @@ function swPrecachePlugin() {
           if (statSync(full).isDirectory()) {
             walk(full)
           } else {
-            const rel = '/' + relative(distDir, full).replace(/\\/g, '/')
+            const rel = relative(distDir, full).replace(/\\/g, '/')
             // Skip the sw.js itself
-            if (rel !== '/sw.js') allFiles.push(rel)
+            if (rel !== 'sw.js') allFiles.push(rel)
           }
         }
       }
       walk(distDir)
 
-      // Read the sw.js template from public/ and replace the placeholder
+      // Read the sw.js template from public/ and replace placeholders
       const swTemplate = readFileSync(resolve('public/sw.js'), 'utf-8')
       const cacheVersion = `vertex-agent-${Date.now()}`
       const swContent = swTemplate
@@ -42,6 +47,10 @@ function swPrecachePlugin() {
         .replace(
           /const APP_SHELL = \[[^\]]*\]/s,
           `const APP_SHELL = ${JSON.stringify(allFiles, null, 2)}`
+        )
+        .replace(
+          /const BASE = '[^']*'/,
+          `const BASE = '${GH_PAGES_BASE}'`
         )
 
       writeFileSync(join(distDir, 'sw.js'), swContent)
@@ -59,14 +68,17 @@ const agentProxy = {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react(), swPrecachePlugin()],
-  server: {
-    port: 5173,
-    proxy: agentProxy,
-  },
-  preview: {
-    port: 5173,   // same port as dev so OPFS data is preserved across modes
-    proxy: agentProxy,
-  },
+export default defineConfig(() => {
+  return {
+    base: GH_PAGES_BASE,
+    plugins: [react(), swPrecachePlugin()],
+    server: {
+      port: 5173,
+      proxy: agentProxy,
+    },
+    preview: {
+      port: 5173,
+      proxy: agentProxy,
+    },
+  }
 })

@@ -8,14 +8,15 @@
  */
 
 const CACHE_NAME = 'vertex-agent-v1';
+const BASE = '';  // replaced at build time with GH_PAGES_BASE
 
 // App shell files to precache (populated at build time via simple list;
 // Vite hashed filenames change each build, so we also cache at runtime).
 const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/favicon.svg',
-  '/manifest.json',
+  BASE + '/',
+  BASE + 'index.html',
+  BASE + 'favicon.svg',
+  BASE + 'manifest.json',
 ];
 
 // ── Install: precache app shell ─────────────────────────────────────────────
@@ -61,7 +62,7 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           return response;
         })
-        .catch(() => caches.match('/index.html'))
+        .catch(() => caches.match(BASE + 'index.html'))
     );
     return;
   }
