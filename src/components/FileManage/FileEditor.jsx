@@ -163,6 +163,12 @@ const FileEditor = ({ show, onClose, fileName, filePath, fileSource, onSave }) =
   }, [isDirty, onClose, t]);
 
   const handleKeyDown = useCallback((e) => {
+    // Escape to close
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      handleClose();
+      return;
+    }
     // Ctrl/Cmd + S to save
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
@@ -170,7 +176,7 @@ const FileEditor = ({ show, onClose, fileName, filePath, fileSource, onSave }) =
         handleSave();
       }
     }
-  }, [isDirty, saving, handleSave]);
+  }, [isDirty, saving, handleSave, handleClose]);
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);
@@ -184,7 +190,7 @@ const FileEditor = ({ show, onClose, fileName, filePath, fileSource, onSave }) =
   }
 
   return (
-    <div className="file-editor-overlay">
+    <div className="file-editor-overlay" tabIndex={-1}>
       <div className="file-editor-modal">
         {/* Header */}
         <div className="file-editor-header">

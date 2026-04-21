@@ -276,7 +276,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       const isSelected = selectedPath === node.parentDir && selectedName === node.name;
       return (
         <div key={node.id} className={`tree-node file-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 16 + 12 }}>
-          <div className="tree-item file-item" onClick={(e) => { e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name); }}>
+          <div className="tree-item file-item" onClick={(e) => { e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name); }} onDoubleClick={(e) => { e.stopPropagation(); handleEditFile(node.name, node.parentDir); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name); }}>
             <span className="tree-icon-spacer" />
             <File className="tree-icon file-icon" width={18} height={18} />
             <span className="tree-label">{node.name}</span>
