@@ -3,7 +3,7 @@ import { checkAgentAvailable, connectAgent } from '../../models/agent';
 import { exportToZip, importFromZip } from '../../vfs/opfs';
 import { useI18n } from '../../i18n/context';
 import { SUPPORTED_LOCALES } from '../../i18n/locales';
-import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User } from '../Icons/Icons';
+import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User, Cloud } from '../Icons/Icons';
 import './Settings.css';
 
 const Settings = ({
@@ -17,6 +17,7 @@ const Settings = ({
   onThemeChange,
   agents,
   onAgentsChange,
+  onE2bChange,
   onFactoryReset,
   nickname,
   onNicknameChange,
@@ -46,6 +47,10 @@ const Settings = ({
   const [factoryResetting, setFactoryResetting] = useState(false);
   const zipInputRef = useRef(null);
   const [localNickname, setLocalNickname] = useState(nickname || '');
+  const [agentAddMode, setAgentAddMode] = useState('server'); // 'server' | 'e2b'
+  const [e2bApiKeyInput, setE2bApiKeyInput] = useState('');
+  const [e2bEnabling, setE2bEnabling] = useState(false);
+  const [e2bLocalError, setE2bLocalError] = useState(null);
 
   // Initialize form when opening
   useEffect(() => {
@@ -179,6 +184,20 @@ const Settings = ({
 
   const handleRemoveAgent = (url) => {
     onAgentsChange(agents.filter((a) => a.url !== url));
+  };
+
+  const handleEnableE2b = async () => {
+    if (!e2bApiKeyInput.trim() || !onE2bChange) return;
+    setE2bEnabling(true);
+    setE2bLocalError(null);
+    try {
+      await onE2bChange(e2bApiKeyInput.trim());
+      setE2bApiKeyInput('');
+    } catch (err) {
+      setE2bLocalError(err.message);
+    } finally {
+      setE2bEnabling(false);
+    }
   };
 
   const handleProviderChange = (e) => {
@@ -439,17 +458,31 @@ const Settings = ({
                   <div className="agents-empty">{t('agentSettings.empty')}</div>
                 )}
                 {agents.map((agent) => (
-                  <div key={agent.url} className={`agent-item ${agent.status}`}>
+                  <div key={agent.url} className={`agent-item ${agent.status}${agent.isE2b ? ' e2b' : ''}`}>
                     <div className="agent-item-info">
-                      <span className={`agent-status-dot ${agent.status}`} />
+                      <span className={`agent-status-dot ${agent.status}${agent.isE2b ? ' e2b' : ''}`} />
                       <div className="agent-item-details">
                         <span className="agent-item-name">{agent.name}</span>
-                        <span className="agent-item-url">{agent.url}</span>
+                        <span className="agent-item-url">{agent.isE2b ? (agent.sandboxId || t('agentSettings.e2bNotStarted')) : agent.url}</span>
                       </div>
                     </div>
-                    <button className="agent-remove-btn" onClick={() => handleRemoveAgent(agent.url)} title={t('agentSettings.removeAgent')}>
-                      <X width={14} height={14} />
-                    </button>
+                    {agent.isE2b && agent.status === 'connected' && (
+                      <button
+                        className="agent-remove-btn"
+                        onClick={async () => {
+                          // Disable E2B: clear key and cleanup
+                          await onE2bChange('');
+                        }}
+                        title={t('agentSettings.removeAgent')}
+                      >
+                        <X width={14} height={14} />
+                      </button>
+                    )}
+                    {!agent.isE2b && (
+                      <button className="agent-remove-btn" onClick={() => handleRemoveAgent(agent.url)} title={t('agentSettings.removeAgent')}>
+                        <X width={14} height={14} />
+                      </button>
+                    )}
                     {agent.status === 'needsAuth' && connectingAgent !== agent.url && (
                       <button
                         className="agent-connect-btn"
@@ -480,24 +513,68 @@ const Settings = ({
               </div>
 
               <label>{t('agentSettings.addAgent')}</label>
-              <div className="agent-add-row">
-                <input
-                  type="text"
-                  placeholder={t('agentSettings.hostPlaceholder')}
-                  value={newAgentUrl}
-                  onChange={(e) => { setNewAgentUrl(e.target.value); setNewAgentError(null); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddAgent(); }}
-                />
+              <div className="agent-mode-selector">
                 <button
-                  className="agent-add-btn"
-                  onClick={handleAddAgent}
-                  disabled={newAgentChecking || !newAgentUrl.trim()}
+                  className={`agent-mode-btn ${agentAddMode === 'server' ? 'active' : ''}`}
+                  onClick={() => setAgentAddMode('server')}
                 >
-                  {newAgentChecking ? t('agentSettings.checking') : t('agentSettings.connect')}
+                  <Plug width={14} height={14} />
+                  {t('agentSettings.modeServer')}
+                </button>
+                <button
+                  className={`agent-mode-btn ${agentAddMode === 'e2b' ? 'active' : ''}`}
+                  onClick={() => setAgentAddMode('e2b')}
+                >
+                  <Cloud width={14} height={14} />
+                  {t('agentSettings.modeE2b')}
                 </button>
               </div>
-              {newAgentError && <p className="settings-error">{newAgentError}</p>}
-              <p className="settings-hint">{t('agentSettings.hint')}</p>
+
+              {agentAddMode === 'server' && (
+                <>
+                  <div className="agent-add-row">
+                    <input
+                      type="text"
+                      placeholder={t('agentSettings.hostPlaceholder')}
+                      value={newAgentUrl}
+                      onChange={(e) => { setNewAgentUrl(e.target.value); setNewAgentError(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleAddAgent(); }}
+                    />
+                    <button
+                      className="agent-add-btn"
+                      onClick={handleAddAgent}
+                      disabled={newAgentChecking || !newAgentUrl.trim()}
+                    >
+                      {newAgentChecking ? t('agentSettings.checking') : t('agentSettings.connect')}
+                    </button>
+                  </div>
+                  {newAgentError && <p className="settings-error">{newAgentError}</p>}
+                  <p className="settings-hint">{t('agentSettings.hint')}</p>
+                </>
+              )}
+
+              {agentAddMode === 'e2b' && (
+                <>
+                  <div className="e2b-add-row">
+                    <input
+                      type="password"
+                      placeholder={t('e2bSettings.apiKeyPlaceholder')}
+                      value={e2bApiKeyInput}
+                      onChange={(e) => { setE2bApiKeyInput(e.target.value); setE2bLocalError(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleEnableE2b(); }}
+                    />
+                    <button
+                      className="e2b-add-btn"
+                      disabled={e2bEnabling || !e2bApiKeyInput.trim()}
+                      onClick={handleEnableE2b}
+                    >
+                      {e2bEnabling ? t('e2bSettings.starting') : t('e2bSettings.enable')}
+                    </button>
+                  </div>
+                  {e2bLocalError && <p className="settings-error">{e2bLocalError}</p>}
+                  <p className="settings-hint">{t('e2bSettings.hint')}</p>
+                </>
+              )}
             </div>
           )}
           {settingsTab === 'data' && (

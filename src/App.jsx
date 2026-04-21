@@ -5,7 +5,7 @@ import FileManage from './components/FileManage/FileManage';
 import { loadChats, saveChats, clearAll, deleteChat as deleteChatFile } from './vfs/opfs';
 import config from './config/config';
 import llm from './models/llm';
-import { executeCommand, initAgents } from './models/agent';
+import { executeCommand, initAgents, cleanupE2b, enableE2b, E2B_AGENT_ID, getSandboxStatus } from './models/agent';
 import { I18nProvider } from './i18n/index';
 import { useI18n } from './i18n/context';
 import { WifiOff } from './components/Icons/Icons';
@@ -439,6 +439,9 @@ function App() {
     };
   }, []);
 
+  // No cleanup on unmount — E2B sandbox survives page refreshes.
+  // Sandbox auto-expires after 30 minutes of inactivity.
+
   if (!loaded) {
     return <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
       {initError ? (
@@ -495,8 +498,9 @@ function App() {
         onAgentsChange={async (newAgents) => {
           // Track dismissed / un-dismissed agents for auto-detect
           const dismissed = config.get('dismissedAgents') || [];
-          const removed = agents.filter((a) => !newAgents.some((n) => n.url === a.url));
-          const added = newAgents.filter((n) => !agents.some((a) => a.url === n.url));
+          const nonE2bAgents = newAgents.filter((a) => a.url !== E2B_AGENT_ID);
+          const removed = agents.filter((a) => a.url !== E2B_AGENT_ID && !nonE2bAgents.some((n) => n.url === a.url));
+          const added = nonE2bAgents.filter((n) => !agents.some((a) => a.url === n.url && a.url !== E2B_AGENT_ID));
           let updatedDismissed = dismissed;
           if (removed.length > 0) {
             updatedDismissed = [...new Set([...updatedDismissed, ...removed.map((a) => a.url)])];
@@ -509,7 +513,7 @@ function App() {
             await config.set('dismissedAgents', updatedDismissed);
           }
           setAgents(newAgents);
-          const toSave = newAgents.map(({ url, name }) => ({ url, name }));
+          const toSave = nonE2bAgents.map(({ url, name }) => ({ url, name }));
           await config.set('agents', toSave);
           // If selected agent was removed, clear selection
           if (selectedAgentUrl && !newAgents.some((a) => a.url === selectedAgentUrl)) {
@@ -518,6 +522,39 @@ function App() {
             setSelectedAgentUrl(next);
             selectedAgentRef.current = next;
             await config.set('selectedAgent', next);
+          }
+        }}
+        onE2bChange={async (apiKey) => {
+          const oldKey = config.get('e2b.apiKey');
+          await config.set('e2b.apiKey', apiKey || null);
+          if (apiKey && !oldKey) {
+            // E2B was just enabled — start sandbox and update agent list
+            const { connected, error } = await enableE2b();
+            const e2bSandboxInfo = getSandboxStatus();
+            const e2bAgent = { url: E2B_AGENT_ID, name: 'E2B Cloud', status: connected ? 'connected' : 'error', isE2b: true, sandboxId: e2bSandboxInfo.sandboxId };
+            setAgents((prev) => {
+              const updated = [...prev.filter((a) => a.url !== E2B_AGENT_ID), e2bAgent];
+              if (connected) {
+                // Auto-select E2B if nothing else is connected
+                const hasConnected = updated.some((a) => a.status === 'connected');
+                if (!hasConnected || !selectedAgentUrl) {
+                  setSelectedAgentUrl(E2B_AGENT_ID);
+                  selectedAgentRef.current = E2B_AGENT_ID;
+                  config.set('selectedAgent', E2B_AGENT_ID);
+                }
+              }
+              return updated;
+            });
+            if (error) throw new Error(`E2B sandbox failed: ${error}`);
+          } else if (!apiKey && oldKey) {
+            // E2B was just disabled — stop sandbox
+            cleanupE2b();
+            setAgents((prev) => prev.filter((a) => a.url !== E2B_AGENT_ID));
+            if (selectedAgentUrl === E2B_AGENT_ID) {
+              setSelectedAgentUrl(null);
+              selectedAgentRef.current = null;
+              config.set('selectedAgent', null);
+            }
           }
         }}
         onExecuteCommand={(cmd) => executeCommand(cmd, selectedAgentUrl)}

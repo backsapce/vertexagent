@@ -37,6 +37,7 @@
         "llm": "LLM Settings",
         "general": "General",
         "agents": "Agents",
+        "e2b": "E2B Cloud",
         "appearance": "Appearance",
         "data": "Data",
         "language": "Language",
@@ -86,7 +87,19 @@
         "connect": "Connect",
         "hint": "Enter the host URL of an agent server. The server will print a connect token to its console for authentication.",
         "alreadyAdded": "This agent is already added.",
-        "connectFailed": "Could not connect. Make sure the agent server is running."
+        "connectFailed": "Could not connect. Make sure the agent server is running.",
+        "modeServer": "Vertex Server",
+        "modeE2b": "E2B Cloud",
+        "e2bNotStarted": "sandbox not started"
+    },
+    "e2bSettings": {
+        "title": "E2B Cloud Sandbox",
+        "desc": "Run commands in an isolated cloud sandbox powered by E2B. Just enter your API key and a sandbox will be created automatically.",
+        "apiKey": "E2B API Key",
+        "apiKeyPlaceholder": "Enter your E2B API key...",
+        "enable": "Enable",
+        "starting": "Starting...",
+        "hint": "Your API key is stored locally. The sandbox will be created automatically when enabled."
     },
     "appearanceSettings": {
         "title": "Appearance",

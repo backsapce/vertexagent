@@ -37,6 +37,7 @@
         "llm": "LLM 设置",
         "general": "通用",
         "agents": "代理",
+        "e2b": "E2B 云端",
         "appearance": "外观",
         "data": "数据",
         "language": "语言",
@@ -86,7 +87,19 @@
         "connect": "连接",
         "hint": "输入代理服务器的主机 URL。服务器会在控制台打印连接令牌用于认证。",
         "alreadyAdded": "该代理已添加。",
-        "connectFailed": "无法连接。请确保代理服务器正在运行。"
+        "connectFailed": "无法连接。请确保代理服务器正在运行。",
+        "modeServer": "Vertex 服务器",
+        "modeE2b": "E2B 云端",
+        "e2bNotStarted": "沙箱未启动"
+    },
+    "e2bSettings": {
+        "title": "E2B 云端沙箱",
+        "desc": "在 E2B 提供的隔离云沙箱中运行命令。只需输入 API 密钥即可自动创建沙箱。",
+        "apiKey": "E2B API 密钥",
+        "apiKeyPlaceholder": "输入 E2B API 密钥...",
+        "enable": "启用",
+        "starting": "启动中...",
+        "hint": "API 密钥将保存在本地。启用后将自动创建沙箱。"
     },
     "appearanceSettings": {
         "title": "外观",

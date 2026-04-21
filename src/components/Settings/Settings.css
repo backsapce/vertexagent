@@ -503,6 +503,88 @@
   cursor: not-allowed;
 }
 
+/* Agent mode selector (server vs e2b) */
+.agent-mode-selector {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.agent-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.agent-mode-btn:hover {
+  background: var(--color-nav-hover);
+  color: var(--color-text-heading);
+}
+
+.agent-mode-btn.active {
+  background: var(--color-nav-active);
+  color: var(--color-text-heading);
+  border-color: var(--color-primary);
+}
+
+/* E2B add row (inside agents tab) */
+.e2b-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.e2b-add-row input {
+  flex: 1;
+}
+
+.e2b-add-btn {
+  background: #8b5cf6;
+  border: none;
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.e2b-add-btn:hover:not(:disabled) {
+  background: #7c3aed;
+}
+
+.e2b-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* E2B Cloud agent item */
+.agent-item.e2b {
+  border-left: 3px solid #8b5cf6;
+  background: linear-gradient(135deg, var(--color-bg) 0%, rgba(139, 92, 246, 0.03) 100%);
+}
+
+.agent-status-dot.e2b {
+  background: #8b5cf6;
+  box-shadow: 0 0 4px rgba(139, 92, 246, 0.4);
+}
+
+.agent-item.e2b .agent-item-url {
+  color: #8b5cf6;
+  font-style: italic;
+}
+
 /* Agent token auth row */
 .agent-item {
   flex-wrap: wrap;
@@ -670,4 +752,38 @@
 .data-action-btn.danger:hover:not(:disabled) {
   background: #b91c1c;
   opacity: 1;
+}
+
+/* ─── E2B Cloud Settings ─────────────────────────────────────────── */
+
+.e2b-apikey-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.e2b-apikey-row input {
+  flex: 1;
+}
+
+.e2b-save-btn {
+  background: var(--color-primary);
+  border: none;
+  color: var(--color-text);
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.e2b-save-btn:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.e2b-save-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

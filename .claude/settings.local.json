@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:e2b.dev)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(npm run *)",
+      "Bash(node -e \"const { Sandbox } = require\\('e2b'\\); console.log\\(typeof Sandbox.create, typeof Sandbox.list\\)\")"
+    ]
+  }
+}

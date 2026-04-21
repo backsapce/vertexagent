@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useI18n } from '../../i18n/context';
 import Settings from '../Settings/Settings';
 import FileManage from '../FileManage/FileManage';
-import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, Battery } from '../Icons/Icons';
+import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, Battery, Cloud } from '../Icons/Icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
@@ -160,6 +160,7 @@ const MessagePanel = ({
   selectedAgentUrl,
   onSelectAgent,
   onAgentsChange,
+  onE2bChange,
   onFactoryReset,
   showFileManage,
   onToggleFileManage,
@@ -249,6 +250,7 @@ const MessagePanel = ({
         onThemeChange={onThemeChange}
         agents={agents}
         onAgentsChange={onAgentsChange}
+        onE2bChange={onE2bChange}
         onFactoryReset={onFactoryReset}
         nickname={nickname}
         onNicknameChange={onNicknameChange}
@@ -374,27 +376,38 @@ const MessagePanel = ({
         <div className="message-input-hint">
           <span>{t('message.inputHint', { modifier: /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl' })}</span>
           <div className="hint-right">
-            {agents.filter((a) => a.status === 'connected').length > 0 && (
-              <span className="agent-badge">
-                <div className="agent-badge-tooltip">
-                  {selectedAgentUrl || t('message.noAgentSelected')}
-                </div>
-                <Plug width={14} height={14} />
-                {agents.filter((a) => a.status === 'connected').length === 1 ? (
-                  <span>{t('message.agent')}</span>
-                ) : (
-                  <select
-                    className="agent-select-inline"
-                    value={selectedAgentUrl || ''}
-                    onChange={(e) => onSelectAgent(e.target.value || null)}
-                  >
-                    {agents.filter((a) => a.status === 'connected').map((a) => (
-                      <option key={a.url} value={a.url}>{a.name}</option>
-                    ))}
-                  </select>
-                )}
-              </span>
-            )}
+            {agents.filter((a) => a.status === 'connected').length > 0 && (() => {
+              const connectedAgents = agents.filter((a) => a.status === 'connected');
+              const isE2b = connectedAgents.some((a) => a.isE2b && a.url === selectedAgentUrl);
+              const e2bAgent = connectedAgents.find((a) => a.isE2b && a.url === selectedAgentUrl);
+              return (
+                <span className={`agent-badge${isE2b ? ' e2b' : ''}`}>
+                  <div className="agent-badge-tooltip">
+                    {isE2b && e2bAgent?.sandboxId
+                      ? `E2B Cloud — ${e2bAgent.sandboxId}`
+                      : selectedAgentUrl || t('message.noAgentSelected')}
+                  </div>
+                  {isE2b ? (
+                    <Cloud width={14} height={14} />
+                  ) : (
+                    <Plug width={14} height={14} />
+                  )}
+                  {connectedAgents.length === 1 ? (
+                    isE2b ? <span>E2B</span> : <span>{t('message.agent')}</span>
+                  ) : (
+                    <select
+                      className="agent-select-inline"
+                      value={selectedAgentUrl || ''}
+                      onChange={(e) => onSelectAgent(e.target.value || null)}
+                    >
+                      {connectedAgents.map((a) => (
+                        <option key={a.url} value={a.url}>{a.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </span>
+              );
+            })()}
             <ContextBudget messages={messages} />
           </div>
         </div>

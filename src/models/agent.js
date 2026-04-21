@@ -3,10 +3,13 @@
  *
  * Provides helpers to check whether agent servers are reachable,
  * authenticate via temp-token exchange, and execute commands.
- * Supports multiple agent hosts.
+ * Supports multiple agent hosts and E2B cloud sandboxes.
  */
 
 import config from '../config/config';
+import { initE2b, cleanupE2b, getSandboxStatus, executeInSandbox, stopSandbox, enableE2b } from './e2b';
+
+const E2B_AGENT_ID = '__e2b__';
 
 const DEFAULT_AGENT_PATH = '/agent';
 
@@ -100,11 +103,17 @@ export async function connectAgent(tempToken, url) {
 /**
  * Execute a shell command via the agent server.
  * Automatically attaches the saved auth token.
+ * Routes through E2B sandbox if the selected agent is E2B Cloud.
  * @param {string} cmd - The command to run.
  * @param {string} [url] - agent host URL (optional, defaults to local /agent)
  * @returns {Promise<{ stdout: string, stderr: string, code: number }>}
  */
 export async function executeCommand(cmd, url) {
+  // Route through E2B sandbox
+  if (url === E2B_AGENT_ID) {
+    return executeInSandbox(cmd);
+  }
+
   const endpoint = resolveAgentUrl(url);
   const headers = { 'Content-Type': 'application/json' };
   const token = getAgentToken(url);
@@ -286,11 +295,26 @@ export async function initAgents() {
     }
   }
 
-  const allAgents = [...detected, ...checked];
+  // Add E2B cloud agent if API key is configured
+  const e2bKey = config.get('e2b.apiKey');
+  const e2bSandboxInfo = getSandboxStatus();
+  const e2bAgent = { url: E2B_AGENT_ID, name: 'E2B Cloud', status: 'disconnected', isE2b: true, sandboxId: e2bSandboxInfo.sandboxId };
+  if (e2bKey) {
+    try {
+      const { connected } = await initE2b();
+      const info = getSandboxStatus();
+      e2bAgent.status = connected ? 'connected' : 'error';
+      e2bAgent.sandboxId = info.sandboxId;
+    } catch {
+      e2bAgent.status = 'error';
+    }
+  }
+
+  const allAgents = [...detected, ...checked, e2bAgent];
 
   // Persist newly detected agents
   if (detected.length > 0) {
-    await config.set('agents', allAgents.map(({ url, name }) => ({ url, name })));
+    await config.set('agents', allAgents.filter((a) => !a.isE2b).map(({ url, name }) => ({ url, name })));
   }
 
   // Auto-select first connected agent
@@ -302,3 +326,7 @@ export async function initAgents() {
 
   return { agents: allAgents, selectedUrl };
 }
+
+// Re-export E2B functions for use in App.jsx and Settings
+export { cleanupE2b, getSandboxStatus, stopSandbox as stopE2bSandbox, enableE2b };
+export { E2B_AGENT_ID };

@@ -522,6 +522,22 @@ const server = createServer(async (req, res) => {
   json(res, 404, { error: 'Not found' }, req);
 });
 
+loadTokens();
+
+server.listen(PORT, () => {
+  try {
+    if (!existsSync(WORKING_DIR)) {
+      mkdirSync(WORKING_DIR, { recursive: true });
+      console.log(`[agent] Created working directory at ${WORKING_DIR}`);
+    }
+  } catch (err) {
+    console.warn(`[agent] Could not create working directory: ${err.message}`);
+  }
+
+  console.log(`[agent] Server listening on http://localhost:${PORT}/agent`);
+  console.log(`[agent] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+});
+
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 loadTokens();

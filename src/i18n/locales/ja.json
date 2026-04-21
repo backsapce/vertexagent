@@ -37,6 +37,7 @@
         "llm": "LLM 設定",
         "general": "一般",
         "agents": "エージェント",
+        "e2b": "E2B クラウド",
         "appearance": "外観",
         "data": "データ",
         "language": "言語",
@@ -86,7 +87,19 @@
         "connect": "接続",
         "hint": "エージェントサーバーのホスト URL を入力してください。サーバーは認証用の接続トークンをコンソールに表示します。",
         "alreadyAdded": "このエージェントは既に追加されています。",
-        "connectFailed": "接続できません。エージェントサーバーが実行中であることを確認してください。"
+        "connectFailed": "接続できません。エージェントサーバーが実行中であることを確認してください。",
+        "modeServer": "Vertex サーバー",
+        "modeE2b": "E2B クラウド",
+        "e2bNotStarted": "サンドボックス未起動"
+    },
+    "e2bSettings": {
+        "title": "E2B クラウドサンドボックス",
+        "desc": "E2B が提供する隔離されたクラウドサンドボックス内でコマンドを実行します。API キーを入力するだけでサンドボックスが自動作成されます。",
+        "apiKey": "E2B API キー",
+        "apiKeyPlaceholder": "E2B API キーを入力...",
+        "enable": "有効化",
+        "starting": "起動中...",
+        "hint": "API キーはローカルに保存されます。有効化するとサンドボックスが自動で作成されます。"
     },
     "appearanceSettings": {
         "title": "外観",

@@ -67,6 +67,17 @@
   transform: translateY(0);
 }
 
+.agent-badge.e2b {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.1);
+  border-color: rgba(139, 92, 246, 0.25);
+}
+
+.agent-badge.e2b .agent-select-inline {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.05);
+}
+
 .settings-btn {
   background: transparent;
   border: 1px solid var(--color-border-subtle);
