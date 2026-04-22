@@ -1,12 +1,10 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
 import { loadFiles, saveFile, createFile, createDirectory, deleteFile as deleteLocalFile, getFileBlob } from '../../vfs/opfs';
-import { listRemoteFiles, createRemoteFile, deleteRemoteFile, uploadRemoteFile, downloadRemoteFile } from '../../models/agent';
+import { listFiles, createFile as createRemoteFile, deleteFile as deleteRemoteFile, uploadFile as uploadRemoteFile, downloadFile as downloadRemoteFile } from '../../models/agent';
 import { ChevronRight, Folder, File, FilePlus, FolderPlus, Refresh, X, Upload, Cloud, HardDrive, Trash, Download, FileEdit } from '../Icons/Icons';
 import FileEditor from './FileEditor';
 import './FileManage.css';
-
-const REMOTE_ORIGIN = () => window.location.origin;
 
 function triggerDownload(blob, fileName) {
   const url = URL.createObjectURL(blob);
@@ -38,7 +36,6 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
 
   // Adapter: local vs remote file operations, eliminates branching in every handler
   const fileOps = useMemo(() => {
-    const origin = REMOTE_ORIGIN();
     return fileSource === 'local' ? {
       list: () => loadFiles(),
       createFile: (name) => createFile(name),
@@ -47,20 +44,20 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       download: (name, path) => getFileBlob(name, path || 'files'),
       upload: (name, blob, path) => saveFile(name, blob, path || undefined),
     } : {
-      list: () => listRemoteFiles('', origin),
-      createFile: (name) => createRemoteFile(name, '', false, origin),
-      createDir: (name) => createRemoteFile(name, '', true, origin),
+      list: () => listFiles(''),
+      createFile: (name) => createRemoteFile(name, '', false),
+      createDir: (name) => createRemoteFile(name, '', true),
       delete: (name, path) => {
         const fullPath = path ? `${path}/${name}` : name;
-        return deleteRemoteFile(fullPath, origin);
+        return deleteRemoteFile(fullPath);
       },
       download: (name, path) => {
         const fullPath = path ? `${path}/${name}` : name;
-        return downloadRemoteFile(fullPath, origin);
+        return downloadRemoteFile(fullPath);
       },
       upload: (name, file, path) => {
         const fullPath = path ? `${path}/${name}` : name;
-        return uploadRemoteFile(fullPath, file, origin);
+        return uploadRemoteFile(fullPath, file);
       },
     };
   }, [fileSource]);
@@ -171,9 +168,11 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
     if (!isCurrentlyExpanded) {
       const path = parentDir ? `${parentDir}/${dirName}` : dirName;
       try {
-        const children = fileSource === 'local'
+        let children = fileSource === 'local'
           ? (await loadFiles(path))
-          : (await listRemoteFiles(path, REMOTE_ORIGIN()));
+          : (await listFiles(path));
+        // Some providers (e.g. E2B) return a wrapped object instead of a plain array
+        if (!Array.isArray(children) && children.children) children = children.children;
         setFileTree((prevTree) => {
           const updateNode = (node) => {
             if (node.id === dirId) return { ...node, children };
@@ -265,7 +264,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
             {isExpanded && node.children?.length > 0 && <span className="tree-count">({node.children.length})</span>}
             {isSelected && <span className="tree-selected-badge">✓</span>}
           </div>
-          {isExpanded && node.children && (
+          {isExpanded && Array.isArray(node.children) && node.children.length > 0 && (
             <div className="tree-children">
               {node.children.map((child) => renderTreeNode(child, depth + 1, dirPath))}
             </div>

@@ -73,7 +73,7 @@ export async function startSandbox() {
     // Try to find and resume existing sandbox
     const existing = await findExistingSandbox(apiKey);
     if (existing) {
-      _sandbox = Sandbox.connect(existing.sandboxId, { apiKey });
+      _sandbox = await Sandbox.connect(existing.sandboxId, { apiKey });
       _sandboxId = existing.sandboxId;
       _status = 'connected';
       return _sandbox;
@@ -123,9 +123,7 @@ export async function stopSandbox() {
  * @returns {Promise<{ stdout: string, stderr: string, code: number }>}
  */
 export async function executeInSandbox(cmd) {
-  if (!_sandbox || _status !== 'connected') {
-    throw new Error('E2B sandbox not connected');
-  }
+  await ensureSandbox();
 
   const result = await _sandbox.commands.run(cmd);
 
@@ -190,4 +188,114 @@ export async function enableE2b() {
   } catch (err) {
     return { connected: false, error: err.message };
   }
+}
+
+// ─── File operations ────────────────────────────────────────────────────────
+
+async function ensureSandbox() {
+  if (!_sandbox || _status !== 'connected') {
+    await startSandbox();
+  }
+}
+
+/**
+ * List files/directories in the E2B sandbox.
+ * @param {string} [path] - Directory path (empty for root)
+ * @returns {Promise<{id: string, name: string, type: string, size: number, path: string, parentDir: string, children: Array}|Array>}
+ */
+export async function listE2bFiles(path = '') {
+  await ensureSandbox();
+  const entries = await _sandbox.files.list(path || '/');
+  const parentDir = path === '' || path === '/' ? '' : path;
+  return {
+    id: 'root',
+    name: '/',
+    type: 'directory',
+    children: entries.map((entry) => ({
+      id: `${entry.type === 'directory' ? 'dir' : 'file'}-${entry.path}`,
+      name: entry.name,
+      type: entry.type === 'dir' ? 'directory' : 'file',
+      size: entry.type === 'file' ? (entry.size || 0) : 0,
+      path: entry.path,
+      parentDir,
+    })),
+  };
+}
+
+/**
+ * Create a file in the E2B sandbox.
+ * @param {string} path - File path
+ * @param {string} [content] - File content
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+export async function createE2bFile(path, content = '') {
+  await ensureSandbox();
+  await _sandbox.files.write(`/${path}`, content);
+  return { success: true, message: 'File created' };
+}
+
+/**
+ * Create a directory in the E2B sandbox.
+ * @param {string} path - Directory path
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+export async function createE2bDir(path) {
+  await ensureSandbox();
+  await _sandbox.files.makeDir(`/${path}`, { force: true });
+  return { success: true, message: 'Directory created' };
+}
+
+/**
+ * Delete a file or directory in the E2B sandbox.
+ * @param {string} path - Path to delete
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+export async function deleteE2bFile(path) {
+  await ensureSandbox();
+  await _sandbox.files.remove(`/${path}`);
+  return { success: true, message: 'Deleted successfully' };
+}
+
+/**
+ * Upload a file to the E2B sandbox.
+ * @param {string} path - Destination path
+ * @param {Blob|File} file - File to upload
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+export async function uploadE2bFile(path, file) {
+  await ensureSandbox();
+  const content = await file.arrayBuffer();
+  await _sandbox.files.write(`/${path}`, content);
+  return { success: true, message: 'File uploaded' };
+}
+
+/**
+ * Download a file from the E2B sandbox.
+ * @param {string} path - File path
+ * @returns {Promise<Blob>}
+ */
+export async function downloadE2bFile(path) {
+  await ensureSandbox();
+  return _sandbox.files.read(`/${path}`, { format: 'blob' });
+}
+
+/**
+ * Read file content as text from the E2B sandbox.
+ * @param {string} path - File path
+ * @returns {Promise<string>}
+ */
+export async function readE2bFileText(path) {
+  await ensureSandbox();
+  return _sandbox.files.read(`/${path}`, { format: 'text' });
+}
+
+/**
+ * Write file content to the E2B sandbox (used by file editor).
+ * @param {string} path - File path
+ * @param {string} content - File content
+ * @returns {Promise<void>}
+ */
+export async function writeE2bFileText(path, content) {
+  await ensureSandbox();
+  await _sandbox.files.write(`/${path}`, content);
 }

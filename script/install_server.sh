@@ -1,8 +1,12 @@
 #!/usr/bin/env sh
 set -e
 
-# ─── VertexAgent Installer ──────────────────────────────────────────────────
-# Usage:  curl -fsSL https://raw.githubusercontent.com/backsapce/VertexAgent/main/script/install.sh | sh
+# ─── VertexAgent Server Installer ───────────────────────────────────────────
+# Installs the agent server only (no frontend).
+# Suitable for regular servers or E2B sandboxes.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/backsapce/VertexAgent/main/script/install_server.sh | sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 REPO="https://github.com/backsapce/VertexAgent.git"
@@ -59,7 +63,6 @@ ensure_git() {
       error "Cannot install git automatically. Please install git manually and re-run."
     fi
   elif [ "$OS" = "macos" ]; then
-    # Xcode CLT ships git; trigger install if missing
     xcode-select --install 2>/dev/null || true
     error "Please install Xcode Command Line Tools (git) and re-run this script."
   fi
@@ -89,7 +92,6 @@ ensure_node() {
 
   if [ "$OS" = "linux" ]; then
     if has_cmd apt-get; then
-      # NodeSource setup script
       curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
       sudo apt-get install -y -qq nodejs
     elif has_cmd dnf; then
@@ -109,13 +111,6 @@ ensure_node() {
     if has_cmd brew; then
       brew install node
     else
-      info "Homebrew not found — installing Node.js via official installer..."
-      if [ "$ARCH" = "arm64" ]; then
-        NODE_PKG_URL="https://nodejs.org/dist/latest-v22.x/node-v22.0.0-darwin-arm64.tar.gz"
-      else
-        NODE_PKG_URL="https://nodejs.org/dist/latest-v22.x/node-v22.0.0-darwin-x64.tar.gz"
-      fi
-      # Fallback: recommend Homebrew
       warn "Auto-install without Homebrew is unreliable."
       error "Please install Homebrew (https://brew.sh) or Node.js (https://nodejs.org) and re-run."
     fi
@@ -140,21 +135,19 @@ clone_or_update() {
   ok "Source ready at $INSTALL_DIR"
 }
 
-# ─── Install deps & build ───────────────────────────────────────────────────
+# ─── Install deps (server only) ─────────────────────────────────────────────
 
-install_and_build() {
+install_deps() {
   cd "$INSTALL_DIR"
   info "Installing npm dependencies..."
   npm ci --loglevel=error
-  info "Building frontend..."
-  npm run build
-  ok "Build complete"
+  ok "Dependencies installed"
 }
 
 # ─── Create launcher script ─────────────────────────────────────────────────
 
 create_launcher() {
-  LAUNCHER="$INSTALL_DIR/vertex-agent"
+  LAUNCHER="$INSTALL_DIR/vertex-agent-server"
   cat > "$LAUNCHER" <<'SCRIPT'
 #!/usr/bin/env sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -166,7 +159,7 @@ SCRIPT
   # Symlink into PATH
   BIN_DIR="$HOME/.local/bin"
   mkdir -p "$BIN_DIR"
-  ln -sf "$LAUNCHER" "$BIN_DIR/vertex-agent"
+  ln -sf "$LAUNCHER" "$BIN_DIR/vertex-agent-server"
 
   ok "Launcher created at $LAUNCHER"
 
@@ -181,25 +174,66 @@ SCRIPT
   esac
 }
 
+# ─── Create systemd service (Linux only) ────────────────────────────────────
+
+create_systemd_service() {
+  if ! has_cmd systemctl; then
+    info "systemd not detected — skipping service file creation."
+    return
+  fi
+
+  SERVICE_FILE="/etc/systemd/system/vertex-agent.service"
+  info "Creating systemd service at $SERVICE_FILE..."
+
+  cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=VertexAgent Server
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+ExecStart=$INSTALL_DIR/vertex-agent-server
+Restart=on-failure
+RestartSec=5
+Environment=AGENT_PORT=\${AGENT_PORT:-3099}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  ok "Systemd service file created."
+  info "Enable and start with:"
+  info "  sudo systemctl enable --now vertex-agent"
+  info "  sudo systemctl status vertex-agent"
+}
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
 print_summary() {
   echo ""
-  echo "╔══════════════════════════════════════════════════════════╗"
-  echo "║           VertexAgent installed successfully!           ║"
-  echo "╠══════════════════════════════════════════════════════════╣"
-  echo "║                                                        ║"
-  echo "║  Start the server:                                     ║"
-  echo "║    vertex-agent                                        ║"
-  echo "║                                                        ║"
-  echo "║  Or run directly:                                      ║"
-  echo "║    cd $INSTALL_DIR"
-  echo "║    node server/agent.js                                ║"
-  echo "║                                                        ║"
-  echo "║  Default port: 3099  (override with AGENT_PORT=XXXX)  ║"
-  echo "║  Open http://localhost:3099 in your browser            ║"
-  echo "║                                                        ║"
-  echo "╚══════════════════════════════════════════════════════════╝"
+  echo "============================================================"
+  echo "  VertexAgent Server installed successfully!"
+  echo "============================================================"
+  echo ""
+  echo "  Start the server:"
+  echo "    vertex-agent-server"
+  echo ""
+  echo "  Or run directly:"
+  echo "    cd $INSTALL_DIR"
+  echo "    node server/agent.js"
+  echo ""
+  echo "  Default port: 3099  (override with AGENT_PORT=XXXX)"
+  echo ""
+  if has_cmd systemctl; then
+    echo "  Systemd service available:"
+    echo "    sudo systemctl enable --now vertex-agent"
+    echo ""
+  fi
+  echo "  Agent endpoint: http://<host>:3099/agent"
+  echo "  Health check:   http://<host>:3099/agent/health"
+  echo ""
+  echo "============================================================"
   echo ""
 }
 
@@ -207,14 +241,15 @@ print_summary() {
 
 main() {
   echo ""
-  info "Starting VertexAgent installer..."
+  info "Starting VertexAgent Server installer..."
   echo ""
   detect_os
   ensure_git
   ensure_node
   clone_or_update
-  install_and_build
+  install_deps
   create_launcher
+  create_systemd_service
   print_summary
 }
 

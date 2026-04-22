@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
 import { readFileContent, saveFileContent } from '../../vfs/opfs';
-import { downloadRemoteFile, createRemoteFile } from '../../models/agent';
+import { readFileText, writeFile } from '../../models/agent';
 import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
@@ -96,8 +96,7 @@ const FileEditor = ({ show, onClose, fileName, filePath, fileSource, onSave }) =
         fileContent = await readFileContent(fileName, filePath);
       } else {
         const path = filePath ? `${filePath}/${fileName}` : fileName;
-        const blob = await downloadRemoteFile(path, window.location.origin);
-        fileContent = await blob.text();
+        fileContent = await readFileText(path);
       }
 
       setContent(fileContent || '');
@@ -122,7 +121,7 @@ const FileEditor = ({ show, onClose, fileName, filePath, fileSource, onSave }) =
         await saveFileContent(fileName, content, filePath);
       } else {
         const path = filePath ? `${filePath}/${fileName}` : fileName;
-        await createRemoteFile(path, content, false, window.location.origin);
+        await writeFile(path, content);
       }
 
       setOriginalContent(content);

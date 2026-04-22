@@ -7,7 +7,7 @@
  */
 
 import config from '../config/config';
-import { initE2b, cleanupE2b, getSandboxStatus, executeInSandbox, stopSandbox, enableE2b } from './e2b';
+import { initE2b, cleanupE2b, getSandboxStatus, executeInSandbox, stopSandbox, enableE2b, listE2bFiles, createE2bFile, createE2bDir, deleteE2bFile, uploadE2bFile, downloadE2bFile, readE2bFileText, writeE2bFileText } from './e2b';
 
 const E2B_AGENT_ID = '__e2b__';
 
@@ -255,6 +255,114 @@ export async function downloadRemoteFile(path, url) {
 }
 
 /**
+ * Get the currently selected agent URL from config.
+ * @returns {string|null}
+ */
+function getSelectedAgent() {
+  return config.get('selectedAgent') || null;
+}
+
+/**
+ * List files from the active agent (E2B or HTTP server).
+ * @param {string} [path] - Directory path relative to working directory (empty for root).
+ * @returns {Promise<{id: string, name: string, type: string, children: Array}|Array>}
+ */
+export async function listFiles(path = '') {
+  const selected = getSelectedAgent();
+  if (selected === E2B_AGENT_ID) {
+    return listE2bFiles(path);
+  }
+  return listRemoteFiles(path, selected);
+}
+
+/**
+ * Create a file or directory on the active agent.
+ * @param {string} path - Path relative to working directory
+ * @param {string} [content] - File content
+ * @param {boolean} [isDirectory] - If true, creates a directory
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+export async function createFile(path, content = '', isDirectory = false) {
+  const selected = getSelectedAgent();
+  if (selected === E2B_AGENT_ID) {
+    return isDirectory ? createE2bDir(path) : createE2bFile(path, content);
+  }
+  return createRemoteFile(path, content, isDirectory, selected);
+}
+
+/**
+ * Delete a file or directory on the active agent.
+ * @param {string} path - Path relative to working directory
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+export async function deleteFile(path) {
+  const selected = getSelectedAgent();
+  if (selected === E2B_AGENT_ID) {
+    return deleteE2bFile(path);
+  }
+  return deleteRemoteFile(path, selected);
+}
+
+/**
+ * Upload a file to the active agent.
+ * @param {string} path - Path relative to working directory
+ * @param {Blob|File} file - The file to upload
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+export async function uploadFile(path, file) {
+  const selected = getSelectedAgent();
+  if (selected === E2B_AGENT_ID) {
+    return uploadE2bFile(path, file);
+  }
+  return uploadRemoteFile(path, file, selected);
+}
+
+/**
+ * Download a file from the active agent.
+ * @param {string} path - Path relative to working directory
+ * @returns {Promise<Blob>}
+ */
+export async function downloadFile(path) {
+  const selected = getSelectedAgent();
+  if (selected === E2B_AGENT_ID) {
+    return downloadE2bFile(path);
+  }
+  return downloadRemoteFile(path, selected);
+}
+
+/**
+ * Read file content as text from the active agent.
+ * @param {string} path - Path relative to working directory
+ * @returns {Promise<string>}
+ */
+export async function readFileText(path) {
+  const selected = getSelectedAgent();
+  if (selected === E2B_AGENT_ID) {
+    return readE2bFileText(path);
+  }
+  // For HTTP server, download as blob and convert to text
+  const blob = await downloadRemoteFile(path, selected);
+  return blob.text();
+}
+
+/**
+ * Write file content to the active agent.
+ * @param {string} path - Path relative to working directory
+ * @param {string} content - File content
+ * @returns {Promise<void>}
+ */
+export async function writeFile(path, content) {
+  const selected = getSelectedAgent();
+  if (selected === E2B_AGENT_ID) {
+    return writeE2bFileText(path, content);
+  }
+  // For HTTP server, use createRemoteFile (overwrite)
+  await createRemoteFile(path, content, false, selected);
+}
+
+// ─── Agent initialization ───────────────────────────────────────────────────
+
+/**
  * Initialize agents: detect local agent, check saved agents connectivity,
  * and determine which agent should be auto-selected.
  * @returns {Promise<{ agents: Array, selectedUrl: string|null }>}
@@ -330,3 +438,4 @@ export async function initAgents() {
 // Re-export E2B functions for use in App.jsx and Settings
 export { cleanupE2b, getSandboxStatus, stopSandbox as stopE2bSandbox, enableE2b };
 export { E2B_AGENT_ID };
+export { listE2bFiles, createE2bFile, createE2bDir, deleteE2bFile, uploadE2bFile, downloadE2bFile, readE2bFileText, writeE2bFileText };
