@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
 import { loadFiles, saveFile, createFile, createDirectory, deleteFile as deleteLocalFile, getFileBlob } from '../../vfs/opfs';
 import { listFiles, createFile as createRemoteFile, deleteFile as deleteRemoteFile, uploadFile as uploadRemoteFile, downloadFile as downloadRemoteFile } from '../../models/agent';
-import { ChevronRight, Folder, File, FilePlus, FolderPlus, Refresh, X, Upload, Cloud, HardDrive, Trash, Download, FileEdit } from '../Icons/Icons';
+import { ChevronRight, Folder, File, FilePlus, FolderPlus, Refresh, X, Upload, Cloud, HardDrive, Trash, Download, FileEdit, Spinner } from '../Icons/Icons';
 import FileEditor from './FileEditor';
 import './FileManage.css';
 
@@ -25,6 +25,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   const expandedDirsRef = useRef(new Set());
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingDirs, setLoadingDirs] = useState(new Set());
   const [isResizing, setIsResizing] = useState(false);
   const [error, setError] = useState(null);
   const [selectedPath, setSelectedPath] = useState(null);
@@ -166,6 +167,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
     });
 
     if (!isCurrentlyExpanded) {
+      setLoadingDirs((prev) => new Set(prev).add(dirId));
       const path = parentDir ? `${parentDir}/${dirName}` : dirName;
       try {
         let children = fileSource === 'local'
@@ -183,6 +185,12 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
         });
       } catch (err) {
         console.warn(`Failed to load directory ${dirName}:`, err);
+      } finally {
+        setLoadingDirs((prev) => {
+          const next = new Set(prev);
+          next.delete(dirId);
+          return next;
+        });
       }
     }
   }, [fileSource]);
@@ -260,6 +268,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
           >
             <ChevronRight className="tree-chevron" width={12} height={12} style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }} />
             <Folder className="tree-icon folder-icon" width={18} height={18} />
+            {loadingDirs.has(node.id) && <Spinner className="tree-icon tree-spinner" width={18} height={18} />}
             <span className="tree-label">{node.name}</span>
             {isExpanded && node.children?.length > 0 && <span className="tree-count">({node.children.length})</span>}
             {isSelected && <span className="tree-selected-badge">✓</span>}
@@ -299,8 +308,8 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       <div className="filemanage-header">
         <div className="filemanage-header-left">
           <div className="filemanage-source-selector">
-            <button className={`source-btn ${fileSource === 'local' ? 'active' : ''}`} onClick={() => setFileSource('local')} title={t('filemanage.localFiles')}><HardDrive width={16} height={16} /><span>{t('filemanage.localFiles')}</span></button>
-            <button className={`source-btn ${fileSource === 'remote' ? 'active' : ''}`} onClick={() => setFileSource('remote')} title={t('filemanage.remoteFiles')}><Cloud width={16} height={16} /><span>{t('filemanage.remoteFiles')}</span></button>
+            <button className={`source-btn ${fileSource === 'local' ? 'active' : ''}`} onClick={() => setFileSource('local')} title={t('filemanage.localFiles')}><HardDrive width={16} height={16} /></button>
+            <button className={`source-btn ${fileSource === 'remote' ? 'active' : ''}`} onClick={() => setFileSource('remote')} title={t('filemanage.remoteFiles')}><Cloud width={16} height={16} /></button>
           </div>
         </div>
         <div className="filemanage-header-buttons">
