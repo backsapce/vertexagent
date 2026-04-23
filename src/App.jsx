@@ -6,6 +6,7 @@ import { loadChats, saveChats, clearAll, deleteChat as deleteChatFile } from './
 import config from './config/config';
 import llm from './models/llm';
 import { executeCommand, initAgents, cleanupE2b, enableE2b, E2B_AGENT_ID, getSandboxStatus } from './models/agent';
+import { runAgentLoop } from './agent/loop';
 import { I18nProvider } from './i18n/index';
 import { useI18n } from './i18n/context';
 import { WifiOff } from './components/Icons/Icons';
@@ -19,32 +20,12 @@ function formatTime(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-const AGENT_SYSTEM_PROMPT = `You have access to an "execute" tool that can run shell commands on the user's machine.
-To use it, output a command wrapped in XML tags like this:
-<execute>command here</execute>
-
-For example:
-<execute>ls -la</execute>
-<execute>cat package.json</execute>
+const AGENT_SYSTEM_PROMPT = `You are a helpful assistant with access to tools for executing commands, reading/writing files, and managing the filesystem. Use these tools to help the user accomplish their tasks.
 
 Rules:
-- You can use multiple <execute> blocks in a single response.
-- After each command is executed, you will receive the stdout, stderr, and exit code.
-- Use this tool to help users with tasks that require running commands.
-- Always explain what you're doing before and after executing commands.
-- Be careful with destructive commands — confirm with the user first.`;
-
-const EXECUTE_REGEX = /<execute>(.*?)<\/execute>/gs;
-
-function parseExecuteBlocks(text) {
-  const blocks = [];
-  let match;
-  EXECUTE_REGEX.lastIndex = 0;
-  while ((match = EXECUTE_REGEX.exec(text)) !== null) {
-    blocks.push({ cmd: match[1].trim(), fullMatch: match[0], index: match.index });
-  }
-  return blocks;
-}
+- Always explain what you're doing before and after using tools.
+- Be careful with destructive operations — confirm with the user first.
+- If a tool fails, explain the error and suggest alternatives.`;
 
 function OfflineBanner() {
   const { t } = useI18n();
@@ -193,7 +174,7 @@ function App() {
     });
   }, [activeChatId, chats]);
 
-  // Stream LLM response for a given chat
+  // Stream LLM response for a given chat using the agent loop
   const streamResponse = useCallback(async (chatId, chatMessages) => {
     // Prevent duplicate calls (StrictMode double-invoke guard)
     if (abortRef.current) return;
@@ -272,92 +253,40 @@ function App() {
     };
 
     try {
-      // Build API messages; include tool results context for the LLM
-      const buildApiMessages = (msgs) => msgs.map((m) => {
-        const msg = { role: m.role, content: m.content };
-        if (m.images?.length) msg.images = m.images;
-        return msg;
-      });
+      const activeConfig = llm.getActiveConfig();
 
-      const chatOpts = { signal: controller.signal };
-      if (selectedAgentRef.current) {
-        chatOpts.systemPrompt = AGENT_SYSTEM_PROMPT;
-      }
-
-      let apiMessages = buildApiMessages(chatMessages);
-      const MAX_TOOL_ROUNDS = 10;
-
-      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-        // Stream LLM response
-        for await (const chunk of llm.chat(apiMessages, chatOpts)) {
-          if (typeof chunk === 'string') {
-            streamingContentRef.current += chunk;
-          } else {
-            if (chunk.content) streamingContentRef.current += chunk.content;
-            if (chunk.reasoning) streamingThinkingRef.current += chunk.reasoning;
+      const result = await runAgentLoop({
+        messages: chatMessages,
+        systemPrompt: selectedAgentRef.current ? AGENT_SYSTEM_PROMPT : '',
+        agentUrl: selectedAgentRef.current,
+        signal: controller.signal,
+        provider: activeConfig.provider,
+        onUpdate: ({ content, thinking, toolCalls: tcList }) => {
+          streamingContentRef.current = content;
+          if (thinking) streamingThinkingRef.current = thinking;
+          if (tcList) {
+            // Sync tool calls display by unique id
+            for (const tc of tcList) {
+              const existing = toolCalls.find((t) => t.id === tc.id);
+              if (!existing) {
+                toolCalls.push({ id: tc.id, name: tc.name, status: tc.status, result: tc.result });
+              } else if (tc.result !== undefined) {
+                existing.status = tc.status;
+                existing.result = tc.result;
+              }
+            }
           }
           scheduleFlush();
-        }
+        },
+      });
 
-        // Final flush
-        if (rafRef.current) {
-          cancelAnimationFrame(rafRef.current);
-          rafRef.current = null;
-        }
-
-        // Check for execute blocks in the response
-        if (!selectedAgentRef.current) break;
-        const execBlocks = parseExecuteBlocks(streamingContentRef.current);
-        // Only process NEW execute blocks (ones we haven't run yet)
-        const newBlocks = execBlocks.slice(toolCalls.length);
-        if (newBlocks.length === 0) break; // no tool calls, done
-
-        // Execute each new command
-        for (const block of newBlocks) {
-          const tc = { cmd: block.cmd, result: null };
-          toolCalls.push(tc);
-          updateMessage({
-            content: streamingContentRef.current,
-            thinking: streamingThinkingRef.current,
-            toolCalls: [...toolCalls],
-          });
-
-          try {
-            const result = await executeCommand(block.cmd, selectedAgentRef.current);
-            tc.result = result;
-          } catch (err) {
-            tc.result = { stdout: '', stderr: err.message, code: 1 };
-          }
-          updateMessage({
-            content: streamingContentRef.current,
-            thinking: streamingThinkingRef.current,
-            toolCalls: [...toolCalls],
-          });
-        }
-
-        // Build tool results summary and feed back to LLM
-        const toolResultsSummary = newBlocks.map((block, i) => {
-          const tc = toolCalls[toolCalls.length - newBlocks.length + i];
-          const r = tc.result;
-          let out = `Command: ${block.cmd}\nExit code: ${r.code}`;
-          if (r.stdout) out += `\nStdout:\n${r.stdout}`;
-          if (r.stderr) out += `\nStderr:\n${r.stderr}`;
-          return out;
-        }).join('\n---\n');
-
-        // Append assistant response + tool results to conversation for next round
-        apiMessages = [
-          ...apiMessages,
-          { role: 'assistant', content: streamingContentRef.current },
-          { role: 'user', content: `[Tool execution results]\n${toolResultsSummary}` },
-        ];
-
-        // Continue streaming from where we left off
-        streamingContentRef.current += '\n\n';
+      // Mark tool calls as completed
+      for (const tc of toolCalls) {
+        tc.status = 'completed';
       }
 
-      const finalContent = streamingContentRef.current;
-      const finalThinking = streamingThinkingRef.current;
+      const finalContent = result.content || streamingContentRef.current;
+      const finalThinking = result.thinking || streamingThinkingRef.current;
       updateMessage({ content: finalContent, thinking: finalThinking, toolCalls: [...toolCalls] });
     } catch (err) {
       if (err.name !== 'AbortError') {

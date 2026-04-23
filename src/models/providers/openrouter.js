@@ -37,6 +37,19 @@ export default {
 
   async *stream(config, messages, opts = {}) {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    const body = {
+      model: config.model || this.defaultModel,
+      messages: formatMultimodal(messages),
+      stream: true,
+      ...(opts.temperature != null && { temperature: opts.temperature }),
+      ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
+    };
+
+    // Tool calling support
+    if (opts.tools?.length) {
+      body.tools = opts.tools;
+    }
+
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -45,13 +58,7 @@ export default {
         'HTTP-Referer': globalThis.location?.href || 'https://vertex-agent.local',
         'X-Title': 'Vertex Agent',
       },
-      body: JSON.stringify({
-        model: config.model || this.defaultModel,
-        messages: formatMultimodal(messages),
-        stream: true,
-        ...(opts.temperature != null && { temperature: opts.temperature }),
-        ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
-      }),
+      body: JSON.stringify(body),
       signal: opts.signal,
     });
 

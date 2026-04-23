@@ -32,19 +32,26 @@ export default {
   async *stream(config, messages, opts = {}) {
     const baseUrl = (config.baseUrl || '').replace(/\/+$/, '');
     if (!baseUrl) throw new Error('Base URL is required for Custom OpenAI-compatible provider.');
+    const body = {
+      model: config.model,
+      messages: formatMultimodal(messages),
+      stream: true,
+      ...(opts.temperature != null && { temperature: opts.temperature }),
+      ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
+    };
+
+    // Tool calling support
+    if (opts.tools?.length) {
+      body.tools = opts.tools;
+    }
+
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${config.apiKey}`,
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages: formatMultimodal(messages),
-        stream: true,
-        ...(opts.temperature != null && { temperature: opts.temperature }),
-        ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
-      }),
+      body: JSON.stringify(body),
       signal: opts.signal,
     });
 

@@ -134,8 +134,8 @@ const llm = {
    * Send a chat request and return an async generator of content chunks.
    *
    * @param {Array<{ role: string, content: string }>} messages
-   * @param {Object} [opts] - { signal?, temperature?, maxTokens?, systemPrompt? }
-   * @returns {AsyncGenerator<string>} yields text chunks
+   * @param {Object} [opts] - { signal?, temperature?, maxTokens?, systemPrompt?, tools? }
+   * @returns {AsyncGenerator<{ content?: string, reasoning?: string, toolCalls?: Array }>}
    */
   async *chat(messages, opts = {}) {
     const provider = providers[activeConfig.provider];
@@ -165,6 +165,7 @@ const llm = {
       signal: opts.signal,
       temperature: opts.temperature,
       maxTokens: opts.maxTokens,
+      tools: opts.tools,
     });
   },
 

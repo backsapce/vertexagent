@@ -20,7 +20,9 @@ export function formatMultimodal(messages) {
 }
 
 /**
- * Parse OpenAI-style SSE stream and yield content/reasoning deltas.
+ * Parse OpenAI-style SSE stream and yield content/reasoning/tool_calls deltas.
+ * Yields: { content, reasoning, toolCalls } where toolCalls is an array of
+ * { id, name, arguments (string chunk) } fragments that must be assembled.
  */
 export async function* readSSE(body) {
   const reader = body.getReader();
@@ -45,9 +47,25 @@ export async function* readSSE(body) {
         try {
           const json = JSON.parse(data);
           const delta = json.choices?.[0]?.delta;
-          const content = delta?.content || null;
-          const reasoning = delta?.reasoning_content || null;
-          if (content || reasoning) yield { content, reasoning };
+          if (!delta) continue;
+
+          const content = delta.content || null;
+          const reasoning = delta.reasoning_content || null;
+
+          // Parse tool call fragments
+          let toolCalls = null;
+          if (delta.tool_calls?.length) {
+            toolCalls = delta.tool_calls.map((tc) => ({
+              index: tc.index ?? 0,
+              id: tc.id || null,
+              name: tc.function?.name || null,
+              arguments: tc.function?.arguments || null,
+            }));
+          }
+
+          if (content || reasoning || toolCalls) {
+            yield { content, reasoning, toolCalls };
+          }
         } catch {
           // skip malformed JSON lines
         }

@@ -37,19 +37,33 @@ export default {
 
   async *stream(config, messages, opts = {}) {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    const body = {
+      model: config.model || this.defaultModel,
+      messages: formatMultimodal(messages),
+      stream: true,
+      ...(opts.temperature != null && { temperature: opts.temperature }),
+      ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
+    };
+
+    // Tool calling support — Qwen DashScope uses OpenAI-style tool format
+    if (opts.tools?.length) {
+      body.tools = opts.tools.map((t) => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters,
+        },
+      }));
+    }
+
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${config.apiKey}`,
       },
-      body: JSON.stringify({
-        model: config.model || this.defaultModel,
-        messages: formatMultimodal(messages),
-        stream: true,
-        ...(opts.temperature != null && { temperature: opts.temperature }),
-        ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
-      }),
+      body: JSON.stringify(body),
       signal: opts.signal,
     });
 

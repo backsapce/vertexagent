@@ -20,6 +20,8 @@
         "thinking": "思考中",
         "execute": "実行：",
         "running": "実行中...",
+        "completed": "完了",
+        "error": "エラー",
         "exitCode": "終了コード {code}",
         "remove": "削除",
         "uploadImage": "画像をアップロード",

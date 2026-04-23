@@ -119,25 +119,48 @@ const ToolBlock = ({ toolCall }) => {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   if (!toolCall) return null;
-  const { cmd, result } = toolCall;
-  const hasOutput = result && (result.stdout || result.stderr);
+
+  // Old execute format: { cmd, result }
+  if (toolCall.cmd) {
+    const { cmd, result } = toolCall;
+    const hasOutput = result && (result.stdout || result.stderr);
+    return (
+      <div className="tool-block">
+        <div className="tool-header" onClick={() => setExpanded((v) => !v)}>
+          <ChevronRight className={expanded ? 'expanded' : ''} width={14} height={14} />
+          <span className="tool-label">{t('message.execute')}</span>
+          <span className="tool-cmd">{cmd}</span>
+          {result && (
+            <span className={`tool-exit-code ${result.code === 0 ? 'success' : 'error'}`}>
+              {t('message.exitCode', { code: result.code })}
+            </span>
+          )}
+          {!result && <span className="tool-exit-code">{t('message.running')}</span>}
+        </div>
+        {expanded && hasOutput && (
+          <div className="tool-output">
+            {result.stdout && <span>{result.stdout}</span>}
+            {result.stderr && <span className="stderr">{result.stderr}</span>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // New tool call format: { name, status?, result? }
+  const { name, status, result } = toolCall;
   return (
     <div className="tool-block">
       <div className="tool-header" onClick={() => setExpanded((v) => !v)}>
         <ChevronRight className={expanded ? 'expanded' : ''} width={14} height={14} />
-        <span className="tool-label">{t('message.execute')}</span>
-        <span className="tool-cmd">{cmd}</span>
-        {result && (
-          <span className={`tool-exit-code ${result.code === 0 ? 'success' : 'error'}`}>
-            {t('message.exitCode', { code: result.code })}
-          </span>
-        )}
-        {!result && <span className="tool-exit-code">{t('message.running')}</span>}
+        <span className="tool-label">{name}</span>
+        {status === 'running' && <span className="tool-exit-code">{t('message.running')}</span>}
+        {status === 'completed' && <span className="tool-exit-code success">{t('message.completed')}</span>}
+        {status === 'error' && <span className="tool-exit-code error">{t('message.error')}</span>}
       </div>
-      {expanded && hasOutput && (
+      {expanded && result && (
         <div className="tool-output">
-          {result.stdout && <span>{result.stdout}</span>}
-          {result.stderr && <span className="stderr">{result.stderr}</span>}
+          <pre>{result}</pre>
         </div>
       )}
     </div>
@@ -306,10 +329,10 @@ const MessagePanel = ({
                   </div>
                 )}
                 {msg.role === 'assistant' && msg.toolCalls?.length > 0 && (
-                  msg.toolCalls.map((tc, i) => <ToolBlock key={i} toolCall={tc} />)
+                  msg.toolCalls.map((tc, i) => <ToolBlock key={tc.id || i} toolCall={tc} />)
                 )}
                 <div className="message-text">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{msg.toolCalls?.length > 0 ? msg.content.replace(/<execute>[\s\S]*?<\/execute>/g, '').trim() : msg.content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{msg.content}</ReactMarkdown>
                   {msg.role === 'assistant' && msg.content?.startsWith('Error:') && !streaming && onRetry && (
                     <button className="retry-btn" onClick={() => onRetry()} title={t('message.retry')}>Retry</button>
                   )}

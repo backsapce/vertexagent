@@ -8,17 +8,22 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:lts-alpine
+FROM nginx:alpine
 
-WORKDIR /app
+RUN echo '\
+server {\
+  listen 80;\
+  server_name _;\
+  root /usr/share/nginx/html;\
+  index index.html;\
+  location / {\
+    try_files $$uri $$uri/ /index.html;\
+  }\
+}\
+' > /etc/nginx/conf.d/default.conf
 
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/server ./server
-COPY --from=build /app/package.json ./
-COPY --from=build /app/package-lock.json ./
+COPY --from=build /app/dist /usr/share/nginx/html
 
-RUN npm ci --omit=dev
+EXPOSE 80
 
-EXPOSE 3099
-
-CMD ["node", "server/agent.js"]
+CMD ["nginx", "-g", "daemon off;"]

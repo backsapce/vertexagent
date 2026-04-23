@@ -39,15 +39,15 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   const fileOps = useMemo(() => {
     return fileSource === 'local' ? {
       list: () => loadFiles(),
-      createFile: (name) => createFile(name),
-      createDir: (name) => createDirectory(name),
-      delete: (name, path) => deleteLocalFile(name, path || 'files'),
-      download: (name, path) => getFileBlob(name, path || 'files'),
-      upload: (name, blob, path) => saveFile(name, blob, path || undefined),
+      createFile: (name, path) => createFile(name, path),
+      createDir: (name, path) => createDirectory(name, path),
+      delete: (name, path) => deleteLocalFile(name, path ?? null),
+      download: (name, path) => getFileBlob(name, path ?? null),
+      upload: (name, blob, path) => saveFile(name, blob, path ?? null),
     } : {
       list: () => listFiles(''),
-      createFile: (name) => createRemoteFile(name, '', false),
-      createDir: (name) => createRemoteFile(name, '', true),
+      createFile: (name, path) => createRemoteFile(name, path || '', false),
+      createDir: (name, path) => createRemoteFile(name, path || '', true),
       delete: (name, path) => {
         const fullPath = path ? `${path}/${name}` : name;
         return deleteRemoteFile(fullPath);
@@ -168,7 +168,8 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
 
     if (!isCurrentlyExpanded) {
       setLoadingDirs((prev) => new Set(prev).add(dirId));
-      const path = parentDir ? `${parentDir}/${dirName}` : dirName;
+      const rawPath = parentDir ? `${parentDir}/${dirName}` : dirName;
+      const path = rawPath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
       try {
         let children = fileSource === 'local'
           ? (await loadFiles(path))
@@ -199,16 +200,16 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   const handleNewFile = useCallback(async () => {
     const fileName = prompt(t('filemanage.newFileNamePrompt'), 'untitled.txt');
     if (!fileName) return;
-    try { await fileOps.createFile(fileName); } catch { alert(t('filemanage.createFileError')); return; }
+    try { await fileOps.createFile(fileName, selectedPath); } catch { alert(t('filemanage.createFileError')); return; }
     await refreshTree();
-  }, [t, fileOps, refreshTree]);
+  }, [t, fileOps, refreshTree, selectedPath]);
 
   const handleNewDir = useCallback(async () => {
     const dirName = prompt(t('filemanage.newDirNamePrompt'), 'new-folder');
     if (!dirName) return;
-    try { await fileOps.createDir(dirName); } catch { alert(t('filemanage.createDirError')); return; }
+    try { await fileOps.createDir(dirName, selectedPath); } catch { alert(t('filemanage.createDirError')); return; }
     await refreshTree();
-  }, [t, fileOps, refreshTree]);
+  }, [t, fileOps, refreshTree, selectedPath]);
 
   // Delete — unified via adapter
   const handleDeleteFile = useCallback(async (fileName, filePath, isDirectory) => {
@@ -237,7 +238,9 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   const handleEditorSave = useCallback(() => refreshTree(), [refreshTree]);
 
   const handleSelectItem = useCallback((path, name) => {
-    setSelectedPath(path ? `${path}/${name}` : name);
+    const rawPath = path ? `${path}/${name}` : name;
+    const normalized = rawPath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
+    setSelectedPath(normalized || null);
     setSelectedName(name);
   }, []);
 

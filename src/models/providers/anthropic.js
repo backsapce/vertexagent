@@ -1,6 +1,7 @@
 /**
  * Anthropic (Claude) provider.
  * Uses the Anthropic Messages API with streaming.
+ * Supports native tool_use / tool_result protocol.
  */
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com';
@@ -19,11 +20,6 @@ export default {
   defaultModel: 'claude-sonnet-4-20250514',
   defaultBaseUrl: DEFAULT_BASE_URL,
 
-  /**
-   * Fetch available models from the Anthropic API.
-   * @param {Object} config - { apiKey, baseUrl? }
-   * @returns {Promise<Array<{ id, name }>>}
-   */
   async listModels(config) {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
     const res = await fetch(`${baseUrl}/v1/models`, {
@@ -43,7 +39,6 @@ export default {
   async *stream(config, messages, opts = {}) {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
 
-    // Anthropic uses a separate system message
     let system = undefined;
     const apiMessages = [];
     for (const msg of messages) {
@@ -62,6 +57,25 @@ export default {
       }
     }
 
+    const body = {
+      model: config.model || this.defaultModel,
+      messages: apiMessages,
+      max_tokens: opts.maxTokens || 4096,
+      stream: true,
+      ...(opts.temperature != null && { temperature: opts.temperature }),
+    };
+
+    if (system) body.system = system;
+
+    // Tool calling support
+    if (opts.tools?.length) {
+      body.tools = opts.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.parameters,
+      }));
+    }
+
     const res = await fetch(`${baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
@@ -70,14 +84,7 @@ export default {
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({
-        model: config.model || this.defaultModel,
-        messages: apiMessages,
-        ...(system && { system }),
-        max_tokens: opts.maxTokens || 4096,
-        stream: true,
-        ...(opts.temperature != null && { temperature: opts.temperature }),
-      }),
+      body: JSON.stringify(body),
       signal: opts.signal,
     });
 
@@ -90,6 +97,11 @@ export default {
   },
 };
 
+/**
+ * Parse Anthropic SSE stream.
+ * Yields: { content, reasoning, toolCalls }
+ * toolCalls format: [{ id, name, input (partial JSON string) }]
+ */
 async function* readAnthropicSSE(body) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -111,14 +123,42 @@ async function* readAnthropicSSE(body) {
 
         try {
           const json = JSON.parse(data);
-          if (json.type === 'content_block_delta') {
-            if (json.delta?.type === 'thinking_delta' && json.delta?.thinking) {
-              yield { content: null, reasoning: json.delta.thinking };
-            } else if (json.delta?.text) {
-              yield { content: json.delta.text, reasoning: null };
+
+          if (json.type === 'content_block_start') {
+            // Tool call starts
+            if (json.content_block?.type === 'tool_use') {
+              yield {
+                content: null,
+                reasoning: null,
+                toolCalls: [{
+                  index: json.index ?? 0,
+                  id: json.content_block.id,
+                  name: json.content_block.name,
+                  arguments: null,
+                }],
+              };
             }
+          } else if (json.type === 'content_block_delta') {
+            if (json.delta?.type === 'thinking_delta' && json.delta?.thinking) {
+              yield { content: null, reasoning: json.delta.thinking, toolCalls: null };
+            } else if (json.delta?.text) {
+              yield { content: json.delta.text, reasoning: null, toolCalls: null };
+            } else if (json.delta?.type === 'input_json_delta' && json.delta?.partial_json) {
+              // Tool call argument fragment
+              yield {
+                content: null,
+                reasoning: null,
+                toolCalls: [{
+                  index: json.index ?? 0,
+                  id: null,
+                  name: null,
+                  arguments: json.delta.partial_json,
+                }],
+              };
+            }
+          } else if (json.type === 'message_stop') {
+            return;
           }
-          if (json.type === 'message_stop') return;
         } catch {
           // skip
         }

@@ -1,6 +1,7 @@
 /**
  * Google Gemini provider.
  * Uses the Gemini REST API with streaming (generateContent stream).
+ * Supports native function calling.
  */
 
 const DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -19,11 +20,6 @@ export default {
   defaultModel: 'gemini-2.5-flash',
   defaultBaseUrl: DEFAULT_BASE_URL,
 
-  /**
-   * Fetch available models from the Gemini API.
-   * @param {Object} config - { apiKey, baseUrl? }
-   * @returns {Promise<Array<{ id, name }>>}
-   */
   async listModels(config) {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
     const res = await fetch(`${baseUrl}/models?key=${config.apiKey}`);
@@ -42,12 +38,25 @@ export default {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
     const model = config.model || this.defaultModel;
 
-    // Convert OpenAI-style messages to Gemini format
     let systemInstruction = undefined;
     const contents = [];
     for (const msg of messages) {
       if (msg.role === 'system') {
         systemInstruction = { parts: [{ text: msg.content }] };
+      } else if (msg.role === 'tool') {
+        // Gemini tool result
+        contents.push({
+          role: 'user',
+          parts: [{ functionResponse: { name: msg.name, response: { name: msg.name, content: msg.content } } }],
+        });
+      } else if (msg.tool_calls) {
+        // Gemini function call
+        contents.push({
+          role: 'model',
+          parts: msg.tool_calls.map((tc) => ({
+            functionCall: { name: tc.name, args: JSON.parse(tc.arguments || '{}') },
+          })),
+        });
       } else {
         const parts = [];
         if (msg.images?.length) {
@@ -65,19 +74,32 @@ export default {
       }
     }
 
+    const body = {
+      contents,
+      ...(systemInstruction && { systemInstruction }),
+      generationConfig: {
+        ...(opts.temperature != null && { temperature: opts.temperature }),
+        ...(opts.maxTokens != null && { maxOutputTokens: opts.maxTokens }),
+      },
+    };
+
+    // Tool calling support
+    if (opts.tools?.length) {
+      body.tools = [{
+        functionDeclarations: opts.tools.map((t) => ({
+          name: t.name,
+          description: t.description || '',
+          parameters: t.parameters || { type: 'object', properties: {} },
+        })),
+      }];
+    }
+
     const res = await fetch(
       `${baseUrl}/models/${model}:streamGenerateContent?alt=sse&key=${config.apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents,
-          ...(systemInstruction && { systemInstruction }),
-          generationConfig: {
-            ...(opts.temperature != null && { temperature: opts.temperature }),
-            ...(opts.maxTokens != null && { maxOutputTokens: opts.maxTokens }),
-          },
-        }),
+        body: JSON.stringify(body),
         signal: opts.signal,
       }
     );
@@ -91,6 +113,10 @@ export default {
   },
 };
 
+/**
+ * Parse Gemini SSE stream.
+ * Yields: { content, reasoning, toolCalls }
+ */
 async function* readGeminiSSE(body) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -113,13 +139,25 @@ async function* readGeminiSSE(body) {
         try {
           const json = JSON.parse(data);
           const part = json.candidates?.[0]?.content?.parts?.[0];
-          if (part) {
-            const isThought = part.thought === true;
-            if (isThought && part.text) {
-              yield { content: null, reasoning: part.text };
-            } else if (part.text) {
-              yield { content: part.text, reasoning: null };
-            }
+          if (!part) continue;
+
+          const isThought = part.thought === true;
+          if (isThought && part.text) {
+            yield { content: null, reasoning: part.text, toolCalls: null };
+          } else if (part.text) {
+            yield { content: part.text, reasoning: null, toolCalls: null };
+          } else if (part.functionCall) {
+            // Function call from Gemini
+            yield {
+              content: null,
+              reasoning: null,
+              toolCalls: [{
+                index: 0,
+                id: part.functionCall.name,
+                name: part.functionCall.name,
+                arguments: JSON.stringify(part.functionCall.args),
+              }],
+            };
           }
         } catch {
           // skip

@@ -20,6 +20,8 @@
         "thinking": "Thinking",
         "execute": "Execute:",
         "running": "running...",
+        "completed": "completed",
+        "error": "error",
         "exitCode": "exit {code}",
         "remove": "Remove",
         "uploadImage": "Upload image",

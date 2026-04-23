@@ -236,7 +236,7 @@ export async function importFromZip(blob) {
  * @returns {Promise<{id: string, name: string, type: string, children: Array}|Array>}
  */
 export async function loadFiles(dirName) {
-  const dir = dirName ? await getDirectory(dirName) : await getRootDir();
+  const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
   const children = [];
 
   for (const { name, kind } of await listEntries(dir)) {
@@ -307,7 +307,11 @@ export async function loadFiles(dirName) {
  * @param {string} [dirName] - Directory name relative to root (undefined for 'files' default)
  */
 export async function saveFile(fileName, blob, dirName) {
-  const dir = dirName ? await getDirectory(dirName) : await getDirectory('files');
+  const dir = dirName === null
+    ? await getRootDir()
+    : dirName
+    ? await getDirectory(dirName)
+    : await getDirectory('files');
   await writeText(dir, fileName, blob);
 }
 
@@ -316,12 +320,16 @@ export async function saveFile(fileName, blob, dirName) {
  * @param {string} fileName
  * @param {string} category - 'root', 'messages', 'uploads', or directory name
  */
-export async function deleteFile(fileName, category = 'uploads') {
+export async function deleteFile(fileName, category) {
   const dir =
-    category === 'root'
+    category === 'root' || category === null
       ? await getRootDir()
       : category === 'messages'
       ? await getDirectory('messages')
+      : category === 'files'
+      ? await getDirectory('files')
+      : category
+      ? await getDirectory(category)
       : await getDirectory('files');
 
   await deleteEntry(dir, fileName);
@@ -333,12 +341,16 @@ export async function deleteFile(fileName, category = 'uploads') {
  * @param {string} category - 'root', 'messages', 'uploads', or directory name
  * @returns {Promise<Blob>}
  */
-export async function getFileBlob(fileName, category = 'uploads') {
+export async function getFileBlob(fileName, category) {
   const dir =
-    category === 'root'
+    category === 'root' || category === null
       ? await getRootDir()
       : category === 'messages'
       ? await getDirectory('messages')
+      : category === 'files'
+      ? await getDirectory('files')
+      : category
+      ? await getDirectory(category)
       : await getDirectory('files');
 
   const fileHandle = await dir.getFileHandle(fileName);
@@ -352,7 +364,7 @@ export async function getFileBlob(fileName, category = 'uploads') {
  * @returns {Promise<void>}
  */
 export async function createFile(fileName, dirName) {
-  const dir = dirName ? await getDirectory(dirName) : await getRootDir();
+  const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
   await writeText(dir, fileName, '');
 }
 
@@ -363,7 +375,7 @@ export async function createFile(fileName, dirName) {
  * @returns {Promise<void>}
  */
 export async function createDirectory(dirName, parentDirName) {
-  const parentDir = parentDirName ? await getDirectory(parentDirName) : await getRootDir();
+  const parentDir = parentDirName ? await getDirectory(...parentDirName.split('/')) : await getRootDir();
   await parentDir.getDirectoryHandle(dirName, { create: true });
 }
 
@@ -374,7 +386,7 @@ export async function createDirectory(dirName, parentDirName) {
  * @returns {Promise<string>}
  */
 export async function readFileContent(fileName, dirName) {
-  const dir = dirName ? await getDirectory(dirName) : await getRootDir();
+  const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
   const fileHandle = await dir.getFileHandle(fileName);
   const file = await fileHandle.getFile();
   return await file.text();
@@ -388,6 +400,148 @@ export async function readFileContent(fileName, dirName) {
  * @returns {Promise<void>}
  */
 export async function saveFileContent(fileName, content, dirName) {
-  const dir = dirName ? await getDirectory(dirName) : await getRootDir();
+  const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
   await writeText(dir, fileName, content);
+}
+
+// ─── Memory Operations ────────────────────────────────────────────────────────
+
+const MEMORY_DIR = 'memory';
+const MEMORY_FILE = 'MEMORY.md';
+const USER_FILE = 'USER.md';
+
+/**
+ * Read a memory file from OPFS.
+ * @param {string} filename - MEMORY.md or USER.md
+ * @returns {Promise<string>}
+ */
+export async function readMemoryFile(filename) {
+  try {
+    const dir = await getDirectory(MEMORY_DIR);
+    return await readText(dir, filename);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a memory file to OPFS (overwrite).
+ * @param {string} filename - MEMORY.md or USER.md
+ * @param {string} content
+ */
+export async function writeMemoryFile(filename, content) {
+  const dir = await getDirectory(MEMORY_DIR);
+  await writeText(dir, filename, content);
+}
+
+/**
+ * Delete a memory file.
+ * @param {string} filename - MEMORY.md or USER.md
+ */
+export async function deleteMemoryFile(filename) {
+  try {
+    const dir = await getDirectory(MEMORY_DIR);
+    await deleteEntry(dir, filename);
+  } catch { /* ignore */ }
+}
+
+// ─── Skill Operations ─────────────────────────────────────────────────────────
+
+const SKILLS_DIR = 'skills';
+
+/**
+ * List all skill directories.
+ * @returns {Promise<Array<{ name: string, hasReferences: boolean }>>}
+ */
+export async function listSkillDirs() {
+  try {
+    const dir = await getDirectory(SKILLS_DIR);
+    const skills = [];
+    for (const { name, kind } of await listEntries(dir)) {
+      if (kind === 'directory') {
+        const skillDir = await dir.getDirectoryHandle(name);
+        let hasReferences = false;
+        for (const entry of await listEntries(skillDir)) {
+          if (entry.name === 'references' && entry.kind === 'directory') {
+            hasReferences = true;
+            break;
+          }
+        }
+        skills.push({ name, hasReferences });
+      }
+    }
+    return skills;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read a file from a skill directory.
+ * @param {string} skillName - Skill directory name
+ * @param {string} filename - File to read (e.g., SKILL.md)
+ * @returns {Promise<string|null>}
+ */
+export async function readSkillFile(skillName, filename) {
+  try {
+    const dir = await getDirectory(SKILLS_DIR, skillName);
+    return await readText(dir, filename);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a file to a skill directory.
+ * @param {string} skillName - Skill directory name
+ * @param {string} filename - File to write (e.g., SKILL.md)
+ * @param {string} content
+ */
+export async function writeSkillFile(skillName, filename, content) {
+  const dir = await getDirectory(SKILLS_DIR, skillName);
+  await writeText(dir, filename, content);
+}
+
+/**
+ * Delete a skill directory.
+ * @param {string} skillName
+ */
+export async function deleteSkillDir(skillName) {
+  try {
+    const dir = await getDirectory(SKILLS_DIR);
+    await dir.removeEntry(skillName, { recursive: true });
+  } catch { /* ignore */ }
+}
+
+/**
+ * List files in a skill's references directory.
+ * @param {string} skillName
+ * @returns {Promise<Array<{ name: string }>>}
+ */
+export async function listSkillRefs(skillName) {
+  try {
+    const dir = await getDirectory(SKILLS_DIR, skillName, 'references');
+    const refs = [];
+    for (const { name, kind } of await listEntries(dir)) {
+      if (kind === 'file') refs.push({ name });
+    }
+    return refs;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read a reference file from a skill.
+ * @param {string} skillName
+ * @param {string} filename
+ * @returns {Promise<string|null>}
+ */
+export async function readSkillRef(skillName, filename) {
+  try {
+    const dir = await getDirectory(SKILLS_DIR, skillName, 'references');
+    return await readText(dir, filename);
+  } catch {
+    return null;
+  }
 }

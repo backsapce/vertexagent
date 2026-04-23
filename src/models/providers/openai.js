@@ -3,6 +3,7 @@ import { formatMultimodal, readSSE } from './shared.js';
 /**
  * OpenAI-compatible provider.
  * Works with OpenAI API and any OpenAI-compatible endpoint (e.g. local proxies).
+ * Supports native function/tool calling.
  */
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
@@ -23,11 +24,6 @@ export default {
   defaultModel: 'gpt-4o-mini',
   defaultBaseUrl: DEFAULT_BASE_URL,
 
-  /**
-   * Fetch available models from the API.
-   * @param {Object} config - { apiKey, baseUrl? }
-   * @returns {Promise<Array<{ id, name }>>}
-   */
   async listModels(config) {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
     const res = await fetch(`${baseUrl}/models`, {
@@ -41,28 +37,28 @@ export default {
       .map((m) => ({ id: m.id, name: m.id }));
   },
 
-  /**
-   * Send a chat completion request with streaming.
-   * @param {Object} config  - { apiKey, baseUrl?, model }
-   * @param {Array}  messages - [{ role, content }]
-   * @param {Object} opts     - { signal?, temperature?, maxTokens? }
-   * @returns {AsyncGenerator} yields { content, reasoning } chunks
-   */
   async *stream(config, messages, opts = {}) {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    const body = {
+      model: config.model || this.defaultModel,
+      messages: formatMultimodal(messages),
+      stream: true,
+      ...(opts.temperature != null && { temperature: opts.temperature }),
+      ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
+    };
+
+    // Tool calling support
+    if (opts.tools?.length) {
+      body.tools = opts.tools;
+    }
+
     const res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${config.apiKey}`,
       },
-      body: JSON.stringify({
-        model: config.model || this.defaultModel,
-        messages: formatMultimodal(messages),
-        stream: true,
-        ...(opts.temperature != null && { temperature: opts.temperature }),
-        ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
-      }),
+      body: JSON.stringify(body),
       signal: opts.signal,
     });
 
