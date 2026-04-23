@@ -73,7 +73,7 @@ npm run dev
 
 ```bash
 docker build -t vertex-agent .
-docker run -p 3099:3099 vertex-agent
+docker run -p 80:80 vertex-agent
 ```
 
 ## License

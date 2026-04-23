@@ -19,10 +19,20 @@ const APP_SHELL = [
   BASE + 'manifest.json',
 ];
 
-// ── Install: precache app shell ─────────────────────────────────────────────
+// ── Install: precache app shell (non-atomic — skip failures so partial
+//    offline still works instead of caching nothing at all) ──────────────────
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // Cache each file individually; log failures but keep going
+      for (const url of APP_SHELL) {
+        try {
+          await cache.add(url);
+        } catch (err) {
+          console.warn('[SW] precache failed:', url, err);
+        }
+      }
+    })
   );
   // Activate immediately without waiting for old SW to retire
   self.skipWaiting();
@@ -53,7 +63,8 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/agent')) return;
 
-  // Navigation requests (HTML pages) — network first, fallback to cache
+  // Navigation requests (HTML pages) — network first, fallback to cached
+  // index.html so the SPA loads regardless of the URL path
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
@@ -62,7 +73,21 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           return response;
         })
-        .catch(() => caches.match(BASE + 'index.html'))
+        .catch(async () => {
+          // Try exact index.html path first, then search all caches
+          const cached = await caches.match(BASE + 'index.html');
+          if (cached) return cached;
+          // Last resort: find any cached entry ending with index.html
+          for (const key of await caches.keys()) {
+            const cache = await caches.open(key);
+            const entries = await cache.keys();
+            for (const entry of entries) {
+              if (entry.url.endsWith('index.html')) {
+                return cache.match(entry);
+              }
+            }
+          }
+        })
     );
     return;
   }
