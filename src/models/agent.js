@@ -403,11 +403,12 @@ export async function initAgents() {
     }
   }
 
-  // Add E2B cloud agent if API key is configured
+  // Add E2B cloud agent only if API key is configured
   const e2bKey = config.get('e2b.apiKey');
-  const e2bSandboxInfo = getSandboxStatus();
-  const e2bAgent = { url: E2B_AGENT_ID, name: 'E2B Cloud', status: 'disconnected', isE2b: true, sandboxId: e2bSandboxInfo.sandboxId };
+  let e2bAgent = null;
   if (e2bKey) {
+    const e2bSandboxInfo = getSandboxStatus();
+    e2bAgent = { url: E2B_AGENT_ID, name: 'E2B Cloud', status: 'disconnected', isE2b: true, sandboxId: e2bSandboxInfo.sandboxId };
     try {
       const { connected } = await initE2b();
       const info = getSandboxStatus();
@@ -418,7 +419,7 @@ export async function initAgents() {
     }
   }
 
-  const allAgents = [...detected, ...checked, e2bAgent];
+  const allAgents = [...detected, ...checked, ...(e2bAgent ? [e2bAgent] : [])];
 
   // Persist newly detected agents
   if (detected.length > 0) {

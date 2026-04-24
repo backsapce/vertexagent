@@ -24,7 +24,7 @@
 import { createServer } from 'node:http';
 import { exec } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, unlinkSync, rmdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, unlinkSync, rmSync } from 'node:fs';
 import { join, extname, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
@@ -58,6 +58,7 @@ const MIME_TYPES = {
 };
 
 function serveStatic(res, filePath) {
+  if (res.writableEnded) return true;
   try {
     const data = readFileSync(filePath);
     const ext = extname(filePath);
@@ -183,6 +184,7 @@ function execCommand(cmd, timeout = MAX_TIMEOUT) {
 }
 
 function json(res, status, data, req) {
+  if (res.writableEnded) return;
   const headers = { 'Content-Type': 'application/json', ...corsHeaders(req) };
   res.writeHead(status, headers);
   res.end(JSON.stringify(data));
@@ -197,8 +199,10 @@ async function readBody(req) {
 // ─── Server ─────────────────────────────────────────────────────────────────
 
 const server = createServer(async (req, res) => {
+  try {
   // CORS preflight
   if (req.method === 'OPTIONS') {
+    if (res.writableEnded) return;
     res.writeHead(204, corsHeaders(req));
     return res.end();
   }
@@ -461,7 +465,7 @@ const server = createServer(async (req, res) => {
       }
       const stats = statSync(resolvedPath);
       if (stats.isDirectory()) {
-        rmdirSync(resolvedPath, { recursive: true });
+        rmSync(resolvedPath, { recursive: true });
       } else {
         unlinkSync(resolvedPath);
       }
@@ -500,6 +504,7 @@ const server = createServer(async (req, res) => {
       }
       const fileData = readFileSync(resolvedPath);
       const fileName = normalize(filePath).split(/[\\/]/).pop();
+      if (res.writableEnded) return;
       res.writeHead(200, {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="${fileName}"`,
@@ -520,22 +525,10 @@ const server = createServer(async (req, res) => {
   if (serveStatic(res, staticPath)) return;
 
   json(res, 404, { error: 'Not found' }, req);
-});
-
-loadTokens();
-
-server.listen(PORT, () => {
-  try {
-    if (!existsSync(WORKING_DIR)) {
-      mkdirSync(WORKING_DIR, { recursive: true });
-      console.log(`[agent] Created working directory at ${WORKING_DIR}`);
-    }
   } catch (err) {
-    console.warn(`[agent] Could not create working directory: ${err.message}`);
+    console.error(`[agent] Unhandled error: ${err.message}`);
+    json(res, 500, { error: 'Internal server error' }, req);
   }
-
-  console.log(`[agent] Server listening on http://localhost:${PORT}/agent`);
-  console.log(`[agent] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
 });
 
 // ─── Start ───────────────────────────────────────────────────────────────────

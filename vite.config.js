@@ -46,7 +46,7 @@ function swPrecachePlugin() {
         )
         .replace(
           /const APP_SHELL = \[[^\]]*\]/s,
-          `const APP_SHELL = ${JSON.stringify(allFiles, null, 2)}`
+          `const APP_SHELL = [\n${allFiles.map(f => `  self.location.origin + BASE + '${f}',`).join('\n')}\n]`
         )
         .replace(
           /const BASE = '[^']*'/,

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
 import { loadFiles, saveFile, createFile, createDirectory, deleteFile as deleteLocalFile, getFileBlob } from '../../vfs/opfs';
 import { listFiles, createFile as createRemoteFile, deleteFile as deleteRemoteFile, uploadFile as uploadRemoteFile, downloadFile as downloadRemoteFile } from '../../models/agent';
-import { ChevronRight, Folder, File, FilePlus, FolderPlus, Refresh, X, Upload, Cloud, HardDrive, Trash, Download, FileEdit, Spinner } from '../Icons/Icons';
+import { ChevronRight, ChevronDown, Folder, File, FilePlus, FolderPlus, Refresh, X, Upload, Cloud, HardDrive, Trash, Download, FileEdit, Spinner } from '../Icons/Icons';
 import FileEditor from './FileEditor';
 import './FileManage.css';
 
@@ -46,8 +46,8 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       upload: (name, blob, path) => saveFile(name, blob, path ?? null),
     } : {
       list: () => listFiles(''),
-      createFile: (name, path) => createRemoteFile(name, path || '', false),
-      createDir: (name, path) => createRemoteFile(name, path || '', true),
+      createFile: (name, path) => createRemoteFile(path ? `${path}/${name}` : name, '', false),
+      createDir: (name, path) => createRemoteFile(path ? `${path}/${name}` : name, '', true),
       delete: (name, path) => {
         const fullPath = path ? `${path}/${name}` : name;
         return deleteRemoteFile(fullPath);
@@ -237,10 +237,14 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   const handleEditorClose = useCallback(() => { setEditorOpen(false); setEditingFile(null); }, []);
   const handleEditorSave = useCallback(() => refreshTree(), [refreshTree]);
 
-  const handleSelectItem = useCallback((path, name) => {
-    const rawPath = path ? `${path}/${name}` : name;
-    const normalized = rawPath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
-    setSelectedPath(normalized || null);
+  const handleSelectItem = useCallback((path, name, type) => {
+    if (type === 'directory') {
+      const rawPath = path ? `${path}/${name}` : name;
+      const normalized = rawPath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
+      setSelectedPath(normalized || null);
+    } else {
+      setSelectedPath(null);
+    }
     setSelectedName(name);
   }, []);
 
@@ -255,26 +259,31 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   const renderTreeNode = (node, depth = 0, parentDir = '') => {
     if (node.type === 'directory') {
       const isExpanded = expandedDirs.has(node.id);
-      const isSelected = selectedPath === node.parentDir && selectedName === node.name;
       const dirPath = parentDir ? `${parentDir}/${node.name}` : node.name;
+      const isSelected = selectedPath === dirPath && selectedName === node.name;
 
       return (
-        <div key={node.id} className={`tree-node directory-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 16 }}>
+        <div key={node.id} className={`tree-node directory-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 8 }}>
           <div
             className="tree-item"
             onClick={(e) => {
               e.stopPropagation();
-              handleSelectItem(parentDir || '', node.name);
+              handleSelectItem(parentDir || '', node.name, 'directory');
               toggleDirectory(node.id, node.name, parentDir || node.parentDir);
             }}
-            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleSelectItem(parentDir || '', node.name); }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleSelectItem(parentDir || '', node.name, 'directory'); }}
           >
-            <ChevronRight className="tree-chevron" width={12} height={12} style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }} />
+            {isExpanded ? <ChevronDown className="tree-chevron" width={12} height={12} /> : <ChevronRight className="tree-chevron" width={12} height={12} />}
             <Folder className="tree-icon folder-icon" width={18} height={18} />
             {loadingDirs.has(node.id) && <Spinner className="tree-icon tree-spinner" width={18} height={18} />}
             <span className="tree-label">{node.name}</span>
             {isExpanded && node.children?.length > 0 && <span className="tree-count">({node.children.length})</span>}
             {isSelected && <span className="tree-selected-badge">✓</span>}
+            {node.id !== 'root' && (
+              <div className="file-actions">
+                <button className="file-action-btn delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteFile(node.name, parentDir || node.parentDir, true); }} title={t('filemanage.delete')}><Trash width={16} height={16} /></button>
+              </div>
+            )}
           </div>
           {isExpanded && Array.isArray(node.children) && node.children.length > 0 && (
             <div className="tree-children">
@@ -284,10 +293,11 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
         </div>
       );
     } else {
-      const isSelected = selectedPath === node.parentDir && selectedName === node.name;
+      const filePath = node.parentDir ? `${node.parentDir}/${node.name}` : node.name;
+      const isSelected = selectedPath === filePath && selectedName === node.name;
       return (
-        <div key={node.id} className={`tree-node file-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 16 + 12 }}>
-          <div className="tree-item file-item" onClick={(e) => { e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name); }} onDoubleClick={(e) => { e.stopPropagation(); handleEditFile(node.name, node.parentDir); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name); }}>
+        <div key={node.id} className={`tree-node file-node ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: depth * 8 }}>
+          <div className="tree-item file-item" onClick={(e) => { e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name, 'file'); }} onDoubleClick={(e) => { e.stopPropagation(); handleEditFile(node.name, node.parentDir); }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); handleSelectItem(node.parentDir || '', node.name, 'file'); }}>
             <span className="tree-icon-spacer" />
             <File className="tree-icon file-icon" width={18} height={18} />
             <span className="tree-label">{node.name}</span>

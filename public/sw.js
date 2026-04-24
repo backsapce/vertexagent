@@ -8,15 +8,15 @@
  */
 
 const CACHE_NAME = 'vertex-agent-v1';
-const BASE = '';  // replaced at build time with GH_PAGES_BASE
+const BASE = '/';  // replaced at build time with GH_PAGES_BASE (e.g. '/VertexAgent/')
 
-// App shell files to precache (populated at build time via simple list;
-// Vite hashed filenames change each build, so we also cache at runtime).
+// App shell files to precache — use absolute URLs so they resolve correctly
+// regardless of where the SW is registered (dev vs GH Pages).
 const APP_SHELL = [
-  BASE + '/',
-  BASE + 'index.html',
-  BASE + 'favicon.svg',
-  BASE + 'manifest.json',
+  self.location.origin + BASE,
+  self.location.origin + BASE + 'index.html',
+  self.location.origin + BASE + 'favicon.svg',
+  self.location.origin + BASE + 'manifest.json',
 ];
 
 // ── Install: precache app shell (non-atomic — skip failures so partial
@@ -75,7 +75,7 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(async () => {
           // Try exact index.html path first, then search all caches
-          const cached = await caches.match(BASE + 'index.html');
+          const cached = await caches.match(self.location.origin + BASE + 'index.html');
           if (cached) return cached;
           // Last resort: find any cached entry ending with index.html
           for (const key of await caches.keys()) {

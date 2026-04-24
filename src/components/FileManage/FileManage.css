@@ -183,7 +183,6 @@
 .tree-chevron {
   flex-shrink: 0;
   margin-right: 4px;
-  transition: transform 0.2s ease;
   color: var(--text-secondary, #666);
 }
 
@@ -244,8 +243,7 @@
 
 /* Selected item styles */
 .tree-node.selected > .tree-item {
-  background-color: var(--bg-selected, rgba(0, 123, 255, 0.15));
-  border: 1px solid var(--color-primary, #007bff);
+  background-color: var(--bg-hover, #f0f0f0);
 }
 
 .tree-selected-badge {
@@ -274,7 +272,9 @@
   transition: opacity 0.15s ease;
 }
 
-.file-item:hover .file-actions {
+.file-item:hover .file-actions,
+.tree-item:hover .file-actions,
+.tree-node.selected > .tree-item .file-actions {
   opacity: 1;
 }
 
@@ -464,6 +464,10 @@
 }
 
 [data-theme="dark"] .tree-item:hover {
+  background-color: var(--bg-hover, #333);
+}
+
+[data-theme="dark"] .tree-node.selected > .tree-item {
   background-color: var(--bg-hover, #333);
 }
 
