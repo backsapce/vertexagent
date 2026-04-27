@@ -3,4 +3,3 @@ dist
 .git
 .claude
 *.md
-!README.md

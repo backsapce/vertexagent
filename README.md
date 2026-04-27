@@ -8,12 +8,12 @@ Open the page, pick a model, and start chatting. All data stays on your device v
 
 - **Pure browser runtime** — no server, no database, no signup. Works offline as a PWA.
 - **Zero install & config** — open the URL and go. Settings are persisted in-browser automatically.
-- **Multi-provider LLM support** — OpenAI, Anthropic Claude, Google Gemini, OpenRouter, Qwen, or any OpenAI-compatible endpoint.API KEY SAVE IN YOUR LOCAL BROSWER,NOT ON SERVER.
+- **Multi-provider LLM support** — OpenAI, Anthropic Claude, Google Gemini, OpenRouter, Qwen, or any OpenAI-compatible endpoint. API keys are stored only in your browser, never on a server.
 - **Flexible sandbox types** — run commands via **E2B Cloud Sandbox** or **any custom remote/self-hosted Agent Node** (local or remote), all with token-based authentication.
 - **OPFS-powered storage** — chat history, settings, and config all live in the browser's private filesystem.
 - **Data portability** — export everything to a ZIP, import it back, or factory-reset with one click.
 - **Installable PWA** — add to home screen for a native app experience.
-- **File manager** - for local broswer or remote sandbox
+- **File manager** — browse and manage files in the browser OPFS or on the remote agent node.
 
 ## Quick Start
 
@@ -51,12 +51,53 @@ Connect to [E2B](https://e2b.dev/) for a secure, ephemeral cloud sandbox — no 
 
 Deploy `agent.js` on **any machine** (VPS, home server, another device) and connect to it from the browser. Full shell access to that host.
 
+> **Docker deployment is recommended** for a clean, isolated runtime with no dependency setup.
+
+#### Docker Deploy (Recommended)
+
+```bash
+# pull prebuilt image
+docker run -d \
+  --name vertex-agent \
+  --restart unless-stopped \
+  -p 3099:3099 \
+  -e AGENT_ALLOWED_ORIGINS=http://your-frontend-host:5173 \
+  -v $(pwd)/.vertex-agent:/app/.vertex-agent \
+  backsapce/vertex-agent:latest
+```
+
+Or build from source:
+
+```bash
+docker build -t vertex-agent -f Dockerfile.agent .
+
+docker run -d \
+  --name vertex-agent \
+  --restart unless-stopped \
+  -p 3099:3099 \
+  -e AGENT_ALLOWED_ORIGINS=http://your-frontend-host:5173 \
+  -v $(pwd)/.vertex-agent:/app/.vertex-agent \
+  vertex-agent
+```
+
+If new agent add, a **temporary token** is printed to the console. View it with:
+
+```bash
+docker logs vertex-agent
+```
+
+Paste the temp token into the VertexAgent settings panel to pair. A long-lived token is then exchanged and persisted automatically.
+
+> Mount `/.vertex-agent` to a host volume so tokens survive container restarts.
+
+#### Manual Deploy (without Docker)
+
 ```bash
 # on your server (port 3099)
 node server/agent.js
 ```
 
-On first launch a **temporary token** is printed to the console. Paste it into the VertexAgent settings panel to pair. A long-lived token is then exchanged and persisted automatically.
+On first launch a **temporary token** is printed to the console. Paste it into the VertexAgent settings panel to pair.
 
 ### Local Agent Node
 
@@ -71,10 +112,23 @@ npm run dev
 
 ## Docker
 
+### Frontend
+
 ```bash
-docker build -t vertex-agent .
-docker run -p 80:80 vertex-agent
+docker run -d --name vertex-agent-frontend -p 80:80 backsapce/vertex-agent:latest
 ```
+
+### Agent Node
+
+See the [Custom Remote Agent Node](#custom-remote-agent-node) section above for Docker deployment instructions.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_PORT` | `3099` | Port the agent server listens on |
+| `AGENT_TOKEN_FILE` | `/app/.agent-token` | Path to persist long-lived auth tokens |
+| `AGENT_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated allowed CORS origins |
 
 ## License
 

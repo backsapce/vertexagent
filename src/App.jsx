@@ -444,8 +444,8 @@ function App() {
           setAgents(newAgents);
           const toSave = nonE2bAgents.map(({ url, name }) => ({ url, name }));
           await config.set('agents', toSave);
-          // If selected agent was removed, clear selection
-          if (selectedAgentUrl && !newAgents.some((a) => a.url === selectedAgentUrl)) {
+          // Auto-select first connected agent when nothing is selected, or if current selection was removed
+          if (!selectedAgentUrl || !newAgents.some((a) => a.url === selectedAgentUrl)) {
             const connected = newAgents.filter((a) => a.status === 'connected');
             const next = connected.length > 0 ? connected[0].url : null;
             setSelectedAgentUrl(next);

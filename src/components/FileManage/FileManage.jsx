@@ -41,7 +41,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       list: () => loadFiles(),
       createFile: (name, path) => createFile(name, path),
       createDir: (name, path) => createDirectory(name, path),
-      delete: (name, path) => deleteLocalFile(name, path ?? null),
+      delete: (name, path, isDir) => deleteLocalFile(name, path ?? null, isDir),
       download: (name, path) => getFileBlob(name, path ?? null),
       upload: (name, blob, path) => saveFile(name, blob, path ?? null),
     } : {
@@ -217,7 +217,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       ? t('filemanage.confirmDeleteDir').replace('{name}', fileName)
       : t('filemanage.confirmDeleteFile').replace('{name}', fileName);
     if (!window.confirm(confirmMsg)) return;
-    try { await fileOps.delete(fileName, filePath); } catch { alert(t('filemanage.deleteFileError')); return; }
+    try { await fileOps.delete(fileName, filePath, isDirectory); } catch { alert(t('filemanage.deleteFileError')); return; }
     await refreshTree();
   }, [t, fileOps, refreshTree]);
 

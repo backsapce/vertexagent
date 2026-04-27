@@ -316,11 +316,12 @@ export async function saveFile(fileName, blob, dirName) {
 }
 
 /**
- * Delete a file.
+ * Delete a file or directory.
  * @param {string} fileName
- * @param {string} category - 'root', 'messages', 'uploads', or directory name
+ * @param {string} category - 'root', 'messages', 'uploads', or directory path (e.g. 'folder/subfolder')
+ * @param {boolean} isDirectory - whether to delete recursively
  */
-export async function deleteFile(fileName, category) {
+export async function deleteFile(fileName, category, isDirectory = false) {
   const dir =
     category === 'root' || category === null
       ? await getRootDir()
@@ -329,10 +330,10 @@ export async function deleteFile(fileName, category) {
       : category === 'files'
       ? await getDirectory('files')
       : category
-      ? await getDirectory(category)
+      ? await getDirectory(...category.split('/').filter(Boolean))
       : await getDirectory('files');
 
-  await deleteEntry(dir, fileName);
+  await dir.removeEntry(fileName, { recursive: isDirectory });
 }
 
 /**
