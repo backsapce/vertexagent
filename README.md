@@ -2,7 +2,9 @@
 
 A lightweight AI agent that runs **entirely in your browser** — zero install, zero config, zero backend required.
 
-Open the page, pick a model, and start chatting. All data stays on your device via the [Origin Private File System](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system). Optionally connect a remote (or local) **Agent Node** to let the AI execute shell commands on your behalf.
+Visit **https://backsapce.github.io/VertexAgent/** — pick a model and start chatting. That's it. All data stays on your device via the [Origin Private File System](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system). Optionally connect a remote (or local) **Agent Node** to let the AI execute shell commands on your behalf.
+
+> **Recommended usage:** just use the hosted GitHub Pages link above. VertexAgent runs purely in your browser — there is no server, no data sync, nothing to self-host. Everything is totally private on your own device.
 
 ## Highlights
 
@@ -17,7 +19,7 @@ Open the page, pick a model, and start chatting. All data stays on your device v
 
 ## Quick Start
 
-Just visit the hosted version — nothing to install.
+The easiest way to use VertexAgent is to visit **https://backsapce.github.io/VertexAgent/** in your browser. No install, no config, no server — it's a pure client-side app that lives 100% in your browser.
 
 To self-host or develop locally:
 
@@ -84,7 +86,9 @@ Paste the temp token into the VertexAgent settings panel to pair. A long-lived t
 | `AGENT_TOKEN_FILE` | `/app/.agent-token` | Path to persist long-lived auth tokens |
 | `AGENT_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated allowed CORS origins |
 
-## Frontend
+## Self-Hosting (Optional)
+
+You don't need to self-host VertexAgent — just use the [GitHub Pages](https://backsapce.github.io/VertexAgent/) link. But if you prefer to run your own instance:
 
 ```bash
 docker run -d --name vertex-agent -p 80:80 backsapce/vertex-agent:latest
