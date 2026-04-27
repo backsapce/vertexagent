@@ -58,77 +58,37 @@ Deploy `agent.js` on **any machine** (VPS, home server, another device) and conn
 ```bash
 # pull prebuilt image
 docker run -d \
-  --name vertex-agent \
+  --name vertex-server \
   --restart unless-stopped \
   -p 3099:3099 \
-  -e AGENT_ALLOWED_ORIGINS=http://your-frontend-host:5173 \
+  -e AGENT_ALLOWED_ORIGINS=http://your-frontend-host:3099 \
   -v $(pwd)/.vertex-agent:/app/.vertex-agent \
-  backsapce/vertex-agent:latest
+  backsapce/vertex-server:latest
 ```
 
-Or build from source:
+When a new agent is added, a **temporary token** is printed to the console. View it with:
 
 ```bash
-docker build -t vertex-agent -f Dockerfile.agent .
-
-docker run -d \
-  --name vertex-agent \
-  --restart unless-stopped \
-  -p 3099:3099 \
-  -e AGENT_ALLOWED_ORIGINS=http://your-frontend-host:5173 \
-  -v $(pwd)/.vertex-agent:/app/.vertex-agent \
-  vertex-agent
-```
-
-If new agent add, a **temporary token** is printed to the console. View it with:
-
-```bash
-docker logs vertex-agent
+docker logs vertex-server
 ```
 
 Paste the temp token into the VertexAgent settings panel to pair. A long-lived token is then exchanged and persisted automatically.
 
-> Mount `/.vertex-agent` to a host volume so tokens survive container restarts.
-
-#### Manual Deploy (without Docker)
-
-```bash
-# on your server (port 3099)
-node server/agent.js
-```
-
-On first launch a **temporary token** is printed to the console. Paste it into the VertexAgent settings panel to pair.
-
-### Local Agent Node
-
-Run `agent.js` on your own machine alongside the dev server for local shell access. The local agent is auto-detected on startup.
-
-```bash
-# start both frontend + local agent (port 5173 + 3099)
-npm run dev
-```
-
 > The agent is entirely optional — VertexAgent works as a pure chat UI without any sandbox connected.
 
-## Docker
-
-### Frontend
-
-```bash
-docker run -d --name vertex-agent-frontend -p 80:80 backsapce/vertex-agent:latest
-```
-
-### Agent Node
-
-See the [Custom Remote Agent Node](#custom-remote-agent-node) section above for Docker deployment instructions.
-
-### Environment Variables
+#### Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `AGENT_PORT` | `3099` | Port the agent server listens on |
 | `AGENT_TOKEN_FILE` | `/app/.agent-token` | Path to persist long-lived auth tokens |
 | `AGENT_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated allowed CORS origins |
+
+## Frontend
+
+```bash
+docker run -d --name vertex-agent -p 80:80 backsapce/vertex-agent:latest
+```
 
 ## License
 

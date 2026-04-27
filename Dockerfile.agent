@@ -8,7 +8,7 @@ RUN mkdir -p /app/.vertex-agent
 
 ENV AGENT_PORT=3099
 ENV AGENT_TOKEN_FILE=/app/.agent-token
-ENV AGENT_ALLOWED_ORIGINS=http://localhost:5173
+ENV AGENT_ALLOWED_ORIGINS=http://localhost:3099
 
 EXPOSE 3099
 
