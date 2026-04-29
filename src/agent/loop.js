@@ -67,6 +67,10 @@ export async function runAgentLoop(opts) {
   const allToolCalls = {}; // id -> { id, name, status, result? }
   let finalContent = '';
   let finalThinking = '';
+  // Accumulate usage across rounds (prompt_tokens grows each round)
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  let totalTokens = 0;
 
   // Build the API messages with context management
   let { apiMessages, systemPrompt: finalSystemPrompt } =
@@ -83,7 +87,7 @@ export async function runAgentLoop(opts) {
 
   for (let round = 0; round <= maxRounds; round++) {
     // Stream LLM response
-    const { content, thinking, toolCalls } = await streamAndCollect(
+    const { content, thinking, toolCalls, usage } = await streamAndCollect(
       apiMessages,
       finalSystemPrompt,
       toolSchemas,
@@ -92,6 +96,13 @@ export async function runAgentLoop(opts) {
 
     finalContent = content;
     finalThinking = thinking;
+
+    // Accumulate usage stats across rounds
+    if (usage) {
+      totalPromptTokens += usage.prompt_tokens || 0;
+      totalCompletionTokens += usage.completion_tokens || usage.output_tokens || 0;
+      totalTokens += usage.total_tokens || 0;
+    }
 
     // No tool calls — we're done
     if (!toolCalls || toolCalls.length === 0) {
@@ -159,7 +170,13 @@ export async function runAgentLoop(opts) {
     finalSystemPrompt = ctxResult.systemPrompt;
   }
 
-  return { content: finalContent, thinking: finalThinking, toolCalls: Object.values(allToolCalls) };
+  const usageSummary = totalTokens > 0 ? {
+    prompt_tokens: totalPromptTokens,
+    completion_tokens: totalCompletionTokens,
+    total_tokens: totalTokens,
+  } : null;
+
+  return { content: finalContent, thinking: finalThinking, toolCalls: Object.values(allToolCalls), usage: usageSummary };
 }
 
 /**
@@ -169,12 +186,13 @@ export async function runAgentLoop(opts) {
  * @param {string} systemPrompt
  * @param {Array} toolSchemas
  * @param {Object} opts - { signal, onUpdate }
- * @returns {Promise<{ content: string, thinking: string, toolCalls: Array|null, completed: boolean }>}
+ * @returns {Promise<{ content: string, thinking: string, toolCalls: Array|null, completed: boolean, usage?: Object }>}
  */
 async function streamAndCollect(apiMessages, systemPrompt, toolSchemas, opts) {
   let content = '';
   let thinking = '';
   const toolCallFragments = []; // { id, name, arguments }
+  let usage = null;
 
   try {
     const chatOpts = {
@@ -196,6 +214,11 @@ async function streamAndCollect(apiMessages, systemPrompt, toolSchemas, opts) {
         content += chunk;
         opts.onUpdate?.({ content, thinking, toolCalls: null });
       } else {
+        // Usage data from API (final chunk when stream_options.include_usage = true)
+        if (chunk.usage) {
+          usage = chunk.usage;
+          continue;
+        }
         if (chunk.content) {
           content += chunk.content;
         }
@@ -224,6 +247,7 @@ async function streamAndCollect(apiMessages, systemPrompt, toolSchemas, opts) {
       thinking,
       toolCalls: completedToolCalls,
       completed: !completedToolCalls?.length,
+      usage,
     };
   } catch (err) {
     if (err.name === 'AbortError') {

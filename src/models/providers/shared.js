@@ -23,6 +23,8 @@ export function formatMultimodal(messages) {
  * Parse OpenAI-style SSE stream and yield content/reasoning/tool_calls deltas.
  * Yields: { content, reasoning, toolCalls } where toolCalls is an array of
  * { id, name, arguments (string chunk) } fragments that must be assembled.
+ * When the final chunk includes usage data (stream_options: { include_usage: true }),
+ * yields { usage: { prompt_tokens, completion_tokens, total_tokens } } instead.
  */
 export async function* readSSE(body) {
   const reader = body.getReader();
@@ -46,6 +48,13 @@ export async function* readSSE(body) {
 
         try {
           const json = JSON.parse(data);
+
+          // Usage data in final chunk (when stream_options.include_usage = true)
+          if (json.usage) {
+            yield { usage: json.usage };
+            continue;
+          }
+
           const delta = json.choices?.[0]?.delta;
           if (!delta) continue;
 

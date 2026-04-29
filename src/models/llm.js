@@ -135,7 +135,7 @@ const llm = {
    *
    * @param {Array<{ role: string, content: string }>} messages
    * @param {Object} [opts] - { signal?, temperature?, maxTokens?, systemPrompt?, tools? }
-   * @returns {AsyncGenerator<{ content?: string, reasoning?: string, toolCalls?: Array }>}
+   * @returns {AsyncGenerator<{ content?: string, reasoning?: string, toolCalls?: Array, usage?: Object }>}
    */
   async *chat(messages, opts = {}) {
     const provider = providers[activeConfig.provider];

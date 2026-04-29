@@ -116,6 +116,7 @@ export default {
 /**
  * Parse Gemini SSE stream.
  * Yields: { content, reasoning, toolCalls }
+ * When usageMetadata is present in a chunk, yields { usage: usageMetadata }.
  */
 async function* readGeminiSSE(body) {
   const reader = body.getReader();
@@ -138,6 +139,12 @@ async function* readGeminiSSE(body) {
 
         try {
           const json = JSON.parse(data);
+
+          // Usage metadata (present in every chunk, most accurate in the last)
+          if (json.usageMetadata) {
+            yield { usage: json.usageMetadata };
+          }
+
           const part = json.candidates?.[0]?.content?.parts?.[0];
           if (!part) continue;
 

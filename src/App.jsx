@@ -288,7 +288,7 @@ function App() {
 
       const finalContent = result.content || streamingContentRef.current;
       const finalThinking = result.thinking || streamingThinkingRef.current;
-      updateMessage({ content: finalContent, thinking: finalThinking, toolCalls: [...toolCalls] });
+      updateMessage({ content: finalContent, thinking: finalThinking, toolCalls: [...toolCalls], usage: result.usage });
     } catch (err) {
       if (err.name !== 'AbortError') {
         const errorContent = streamingContentRef.current || `Error: ${err.message}`;

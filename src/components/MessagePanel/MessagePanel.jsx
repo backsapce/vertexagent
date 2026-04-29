@@ -70,9 +70,23 @@ function estimateTokens(messages) {
 const DEFAULT_CONTEXT_WINDOW = 128000; // 128k tokens default
 
 const ContextBudget = ({ messages }) => {
-  const used = estimateTokens(messages);
+  // Check if the last assistant message has real usage data from the API
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && m.usage);
+  const estimated = estimateTokens(messages);
   const total = DEFAULT_CONTEXT_WINDOW;
-  const ratio = Math.min(used / total, 1);
+
+  let used, ratio, label;
+  if (lastAssistant?.usage) {
+    const u = lastAssistant.usage;
+    used = u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || u.output_tokens || 0);
+    ratio = Math.min(used / total, 1);
+    label = `${u.prompt_tokens || '?'} in / ${u.completion_tokens || u.output_tokens || '?'} out`;
+  } else {
+    used = estimated;
+    ratio = Math.min(used / total, 1);
+    label = null;
+  }
+
   const percent = Math.round(ratio * 100);
 
   // Color based on usage
@@ -88,7 +102,15 @@ const ContextBudget = ({ messages }) => {
   return (
     <div className="context-budget">
       <div className="context-budget-tooltip">
-        {formatTokens(used)} / {formatTokens(total)}
+        {label ? (
+          <>
+            {formatTokens(used)} total — {label}
+          </>
+        ) : (
+          <>
+            ~{formatTokens(used)} / {formatTokens(total)} (estimated)
+          </>
+        )}
       </div>
       <div className="context-budget-pie">
         <PieChart size={26} ratio={ratio} color={color} />

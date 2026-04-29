@@ -43,6 +43,7 @@ export default {
       model: config.model || this.defaultModel,
       messages: formatMultimodal(messages),
       stream: true,
+      stream_options: { include_usage: true },
       ...(opts.temperature != null && { temperature: opts.temperature }),
       ...(opts.maxTokens != null && { max_tokens: opts.maxTokens }),
     };

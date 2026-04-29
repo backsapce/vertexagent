@@ -101,6 +101,7 @@ export default {
  * Parse Anthropic SSE stream.
  * Yields: { content, reasoning, toolCalls }
  * toolCalls format: [{ id, name, input (partial JSON string) }]
+ * On message_delta, yields { usage: { input_tokens, output_tokens } } from cache_control usage.
  */
 async function* readAnthropicSSE(body) {
   const reader = body.getReader();
@@ -155,6 +156,11 @@ async function* readAnthropicSSE(body) {
                   arguments: json.delta.partial_json,
                 }],
               };
+            }
+          } else if (json.type === 'message_delta') {
+            // Usage info at end of stream
+            if (json.usage) {
+              yield { usage: json.usage };
             }
           } else if (json.type === 'message_stop') {
             return;
