@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useI18n } from '../../i18n/context';
 import Settings from '../Settings/Settings';
 import FileManage from '../FileManage/FileManage';
-import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, Battery, Cloud } from '../Icons/Icons';
+import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud } from '../Icons/Icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
@@ -86,12 +86,14 @@ const ContextBudget = ({ messages }) => {
   };
 
   return (
-    <div className="context-budget" title={`${formatTokens(used)} / ${formatTokens(total)} tokens`}>
+    <div className="context-budget">
       <div className="context-budget-tooltip">
         {formatTokens(used)} / {formatTokens(total)}
       </div>
-      <Battery width={22} height={14} ratio={ratio} color={color} className="context-budget-icon" />
-      <span className="context-budget-pct" style={{ color }}>{percent}%</span>
+      <div className="context-budget-pie">
+        <PieChart size={26} ratio={ratio} color={color} />
+        <span className="context-budget-pct" style={{ color }}>{percent}</span>
+      </div>
     </div>
   );
 };

@@ -1,12 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useI18n } from '../../i18n/context';
-import { Plus, X, Menu } from '../Icons/Icons';
+import { Plus, X, Menu, ChevronLeft, ChevronRight } from '../Icons/Icons';
 import './ChatList.css';
 
 // Breakpoint for mobile/tablet
 const MOBILE_BREAKPOINT = 768;
 
-const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat }) => {
+const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, collapsed = false, onToggleCollapse }) => {
   const { t } = useI18n();
   const [width, setWidth] = useState(280);
   const [isResizing, setIsResizing] = useState(false);
@@ -82,6 +82,13 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat }
     setMobileOpen(prev => !prev);
   }, []);
 
+  // Toggle collapse (PC mode only)
+  const handleToggleCollapse = useCallback(() => {
+    if (!isMobile && onToggleCollapse) {
+      onToggleCollapse();
+    }
+  }, [isMobile, onToggleCollapse]);
+
   return (
     <>
       {/* Toggle button - visible only on mobile */}
@@ -101,51 +108,64 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat }
       {/* Chat list panel */}
       <div
         ref={panelRef}
-        className={`chat-list ${isMobile && mobileOpen ? 'mobile-open' : ''}`}
-        style={!isMobile ? { width, minWidth: width } : {}}
+        className={`chat-list ${isMobile && mobileOpen ? 'mobile-open' : ''} ${!isMobile && collapsed ? 'collapsed' : ''}`}
+        style={!isMobile ? { width: collapsed ? 0 : width, minWidth: collapsed ? 0 : width } : {}}
       >
-        <div className="chat-list-header">
-          <h2>{t('app.name')}</h2>
-          <button className="new-chat-btn" onClick={onNewChat} title={t('chat.newChat')}>
-            <Plus width={20} height={20} />
-          </button>
-        </div>
-        <div className="chat-list-items">
-          {chats.map((chat) => (
-            <div
-              key={chat.id}
-              className={`chat-item ${chat.id === activeChatId ? 'active' : ''}`}
-              onClick={() => handleSelectChat(chat.id)}
-            >
-              <div className="chat-item-row">
-                <div className="chat-item-title">{chat.title}</div>
-                <button
-                  className="chat-item-delete"
-                  title={t('chat.deleteChat')}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteChat(chat.id);
-                  }}
-                >
-                  <X width={14} height={14} />
-                </button>
+        <div className="chat-list-inner">
+          <div className="chat-list-header">
+            <h2>{t('app.name')}</h2>
+            <button className="new-chat-btn" onClick={onNewChat} title={t('chat.newChat')}>
+              <Plus width={20} height={20} />
+            </button>
+          </div>
+          <div className="chat-list-items">
+            {chats.map((chat) => (
+              <div
+                key={chat.id}
+                className={`chat-item ${chat.id === activeChatId ? 'active' : ''}`}
+                onClick={() => handleSelectChat(chat.id)}
+              >
+                <div className="chat-item-row">
+                  <div className="chat-item-title">{chat.title}</div>
+                  <button
+                    className="chat-item-delete"
+                    title={t('chat.deleteChat')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteChat(chat.id);
+                    }}
+                  >
+                    <X width={14} height={14} />
+                  </button>
+                </div>
+                <div className="chat-item-preview">{chat.lastMessage || t('chat.noMessages')}</div>
+                <div className="chat-item-time">{chat.updatedAt}</div>
               </div>
-              <div className="chat-item-preview">{chat.lastMessage || t('chat.noMessages')}</div>
-              <div className="chat-item-time">{chat.updatedAt}</div>
-            </div>
-          ))}
-          {chats.length === 0 && (
-            <div className="chat-list-empty">
-              <p>{t('chat.noConversations')}</p>
-              <p>{t('chat.clickToStart')}</p>
-            </div>
+            ))}
+            {chats.length === 0 && (
+              <div className="chat-list-empty">
+                <p>{t('chat.noConversations')}</p>
+                <p>{t('chat.clickToStart')}</p>
+              </div>
+            )}
+          </div>
+          {!isMobile && !collapsed && (
+            <div
+              className={`chat-list-resize-handle ${isResizing ? 'resizing' : ''}`}
+              onMouseDown={handleMouseDown}
+            />
           )}
         </div>
-        {!isMobile && (
-          <div
-            className={`chat-list-resize-handle ${isResizing ? 'resizing' : ''}`}
-            onMouseDown={handleMouseDown}
-          />
+        {/* Collapse toggle button - PC mode only, positioned on right border (hidden when collapsed) */}
+        {!isMobile && !collapsed && (
+          <button
+            className="chat-list-collapse-btn"
+            onClick={handleToggleCollapse}
+            aria-label="Collapse chat list"
+            title="Collapse"
+          >
+            <ChevronLeft width={14} height={14} />
+          </button>
         )}
       </div>
     </>

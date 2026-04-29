@@ -40,3 +40,38 @@
   from { transform: translateY(-100%); }
   to   { transform: translateY(0); }
 }
+
+/* Expand button - visible when left panel is collapsed (PC mode only) */
+.chat-list-expand-btn {
+  position: fixed;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  z-index: 50;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 0 50% 50% 0;
+  color: var(--color-text);
+  width: 28px;
+  height: 56px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  box-shadow: 2px 0 6px var(--color-shadow);
+}
+
+.chat-list-expand-btn:hover {
+  background: var(--color-surface-alt);
+  border-color: var(--color-border-focus);
+  color: var(--color-accent);
+}
+
+/* Hide expand button on mobile */
+@media (max-width: 768px) {
+  .chat-list-expand-btn {
+    display: none;
+  }
+}

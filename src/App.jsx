@@ -9,7 +9,7 @@ import { executeCommand, initAgents, cleanupE2b, enableE2b, E2B_AGENT_ID, getSan
 import { runAgentLoop } from './agent/loop';
 import { I18nProvider } from './i18n/index';
 import { useI18n } from './i18n/context';
-import { WifiOff } from './components/Icons/Icons';
+import { WifiOff, ChevronRight } from './components/Icons/Icons';
 import './App.css';
 
 function generateId() {
@@ -51,6 +51,7 @@ function App() {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [showFileManage, setShowFileManage] = useState(false);
   const [fileManageWidth, setFileManageWidth] = useState(320);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [nickname, setNickname] = useState('');
   const savePending = useRef(null);
   const abortRef = useRef(null);
@@ -392,7 +393,20 @@ function App() {
         onSelectChat={handleSelectChat}
         onNewChat={handleNewChat}
         onDeleteChat={handleDeleteChat}
+        collapsed={leftPanelCollapsed}
+        onToggleCollapse={() => setLeftPanelCollapsed(prev => !prev)}
       />
+      {/* Expand button - visible when left panel is collapsed (PC mode only) */}
+      {leftPanelCollapsed && (
+        <button
+          className="chat-list-expand-btn"
+          onClick={() => setLeftPanelCollapsed(false)}
+          aria-label="Expand chat list"
+          title="Expand"
+        >
+          <ChevronRight width={14} height={14} />
+        </button>
+      )}
       <MessagePanel
         messages={messages}
         onSendMessage={handleSendMessage}

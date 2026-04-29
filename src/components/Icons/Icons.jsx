@@ -30,6 +30,12 @@ export const ChevronDown = ({ width = 14, height = 14, className = '' }) => (
   </IconBase>
 );
 
+export const ChevronLeft = ({ width = 14, height = 14, className = '' }) => (
+  <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
+    <polyline points="15 18 9 12 15 6" />
+  </IconBase>
+);
+
 
 // File & Folder Icons
 export const Folder = ({ width = 18, height = 18, className = '' }) => (
@@ -283,6 +289,36 @@ export const Spinner = ({ width = 16, height = 16, className = '' }) => (
     <path d="M21 12a9 9 0 1 1-6.219-8.56" />
   </svg>
 );
+
+// Pie Chart icon for context budget
+export const PieChart = ({ size = 28, ratio = 0, color = 'currentColor', className = '' }) => {
+  const radius = 10;
+  const stroke = 3;
+  const cx = size / 2;
+  const cy = size / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - ratio);
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} fill="none" className={className}>
+      {/* Background circle */}
+      <circle cx={cx} cy={cy} r={radius} stroke="currentColor" strokeWidth={stroke} opacity="0.15" fill="none" />
+      {/* Foreground arc */}
+      <circle
+        cx={cx}
+        cy={cy}
+        r={radius}
+        stroke={color}
+        strokeWidth={stroke}
+        fill="none"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        transform={`rotate(-90 ${cx} ${cy})`}
+      />
+    </svg>
+  );
+};
 
 // Layers / Skills Icon
 export const Layers = ({ width = 16, height = 16, className = '' }) => (

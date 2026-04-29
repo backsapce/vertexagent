@@ -749,25 +749,38 @@
   gap: 8px;
 }
 
-/* Context budget battery indicator */
+/* Context budget pie chart indicator */
 .context-budget {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
   color: var(--color-text-secondary);
   cursor: default;
   flex-shrink: 0;
 }
 
-.context-budget-icon {
-  display: block;
+.context-budget-pie {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+}
+
+.context-budget-pie svg {
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 .context-budget-pct {
-  font-size: 10px;
+  position: relative;
+  z-index: 1;
+  font-size: 9px;
   font-weight: 600;
-  text-align: right;
+  line-height: 1;
+  text-align: center;
 }
 
 .context-budget-tooltip {
