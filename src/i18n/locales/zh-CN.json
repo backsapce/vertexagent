@@ -43,6 +43,7 @@
         "appearance": "外观",
         "data": "数据",
         "language": "语言",
+        "skills": "技能",
         "cancel": "取消",
         "save": "保存"
     },
@@ -139,6 +140,18 @@
         "desc": "选择界面的显示语言。",
         "label": "显示语言",
         "auto": "自动（跟随系统）"
+    },
+    "skillSettings": {
+        "title": "技能",
+        "desc": "启用或禁用默认技能。禁用的技能不会出现在系统提示中。",
+        "empty": "没有可用的技能。技能从 OPFS 技能目录加载。",
+        "enableSkill": "启用技能",
+        "disableSkill": "禁用技能",
+        "version": "版本",
+        "enabled": "已启用",
+        "disabled": "已禁用",
+        "enableAll": "全部启用",
+        "disableAll": "全部禁用"
     },
     "errors": {
         "noLLMConfigured": "请在设置中配置 LLM 服务商。",

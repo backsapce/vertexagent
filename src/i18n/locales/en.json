@@ -43,6 +43,7 @@
         "appearance": "Appearance",
         "data": "Data",
         "language": "Language",
+        "skills": "Skills",
         "cancel": "Cancel",
         "save": "Save"
     },
@@ -139,6 +140,18 @@
         "desc": "Choose the display language for the interface.",
         "label": "Display Language",
         "auto": "Auto (System)"
+    },
+    "skillSettings": {
+        "title": "Skills",
+        "desc": "Enable or disable default skills. Disabled skills won't appear in the system prompt.",
+        "empty": "No skills available. Skills are loaded from the OPFS skills directory.",
+        "enableSkill": "Enable skill",
+        "disableSkill": "Disable skill",
+        "version": "Version",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "enableAll": "Enable All",
+        "disableAll": "Disable All"
     },
     "errors": {
         "noLLMConfigured": "Please configure an LLM provider in Settings.",

@@ -284,4 +284,13 @@ export const Spinner = ({ width = 16, height = 16, className = '' }) => (
   </svg>
 );
 
+// Layers / Skills Icon
+export const Layers = ({ width = 16, height = 16, className = '' }) => (
+  <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
+    <polygon points="12 2 2 7 12 12 22 7 12 2" />
+    <polyline points="2 17 12 22 22 17" />
+    <polyline points="2 12 12 17 22 12" />
+  </IconBase>
+);
+
 // Empty State Icons

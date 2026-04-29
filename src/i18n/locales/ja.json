@@ -43,6 +43,7 @@
         "appearance": "外観",
         "data": "データ",
         "language": "言語",
+        "skills": "スキル",
         "cancel": "キャンセル",
         "save": "保存"
     },
@@ -139,6 +140,18 @@
         "desc": "インターフェースの表示言語を選択します。",
         "label": "表示言語",
         "auto": "自動（システム）"
+    },
+    "skillSettings": {
+        "title": "スキル",
+        "desc": "デフォルトスキルを有効または無効にします。無効にしたスキルはシステムプロンプトに表示されません。",
+        "empty": "利用可能なスキルがありません。スキルはOPFSスキルディレクトリから読み込まれます。",
+        "enableSkill": "スキルを有効化",
+        "disableSkill": "スキルを無効化",
+        "version": "バージョン",
+        "enabled": "有効",
+        "disabled": "無効",
+        "enableAll": "すべて有効化",
+        "disableAll": "すべて無効化"
     },
     "errors": {
         "noLLMConfigured": "設定で LLM プロバイダーを設定してください。",

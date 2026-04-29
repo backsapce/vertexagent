@@ -25,6 +25,7 @@ import {
   listSkillRefs,
   readSkillRef,
 } from '../vfs/opfs';
+import config from '../config/config';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -33,7 +34,6 @@ import {
  * @returns {Promise<Array<{ name: string, description: string, version: string }>>}
  */
 export async function listSkills() {
-  debugger
   const dirs = await listSkillDirs();
   const skills = [];
   for (const dir of dirs) {
@@ -104,11 +104,84 @@ export async function deleteSkill(name) {
 }
 
 /**
+ * Get the set of disabled skill names.
+ * @returns {Promise<Set<string>>}
+ */
+export async function getDisabledSkills() {
+  const disabled = config.get('skills.disabled') || [];
+  return new Set(disabled);
+}
+
+/**
+ * Toggle a skill's enabled/disabled state.
+ * @param {string} name - Skill name
+ * @param {boolean} enabled - true to enable, false to disable
+ */
+export async function setSkillEnabled(name, enabled) {
+  const disabled = config.get('skills.disabled') || [];
+  const disabledSet = new Set(disabled);
+  if (enabled) {
+    disabledSet.delete(name);
+  } else {
+    disabledSet.add(name);
+  }
+  await config.set('skills.disabled', Array.from(disabledSet));
+}
+
+/**
+ * Check if a skill is enabled.
+ * @param {string} name - Skill name
+ * @returns {Promise<boolean>}
+ */
+export async function isSkillEnabled(name) {
+  const disabled = config.get('skills.disabled') || [];
+  return !disabled.includes(name);
+}
+
+/**
+ * List all available skills with their metadata and enabled state.
+ * @param {boolean} [includeDisabled=true] - Whether to include disabled skills
+ * @returns {Promise<Array<{ name: string, description: string, version: string, enabled: boolean }>>}
+ */
+export async function listAllSkills(includeDisabled = true) {
+  const dirs = await listSkillDirs();
+  const skills = [];
+  const disabledSet = includeDisabled ? await getDisabledSkills() : new Set();
+  
+  for (const dir of dirs) {
+    const content = await readSkillFile(dir.name, 'SKILL.md');
+    if (!content) continue;
+    const { name, description, version } = parseFrontmatter(content);
+    const skillName = name || dir.name;
+    skills.push({
+      name: skillName,
+      description: description || 'No description provided',
+      version: version || '1.0.0',
+      enabled: !disabledSet.has(skillName),
+    });
+  }
+  return skills;
+}
+
+/**
  * Build the available skills section for the system prompt.
+ * Only includes enabled skills.
  * @returns {Promise<string>}
  */
 export async function buildSkillsSection() {
-  const skills = await listSkills();
+  const disabledSet = await getDisabledSkills();
+  const dirs = await listSkillDirs();
+  const skills = [];
+  
+  for (const dir of dirs) {
+    const content = await readSkillFile(dir.name, 'SKILL.md');
+    if (!content) continue;
+    const { name, description } = parseFrontmatter(content);
+    const skillName = name || dir.name;
+    if (disabledSet.has(skillName)) continue;
+    skills.push({ name: skillName, description: description || 'No description provided' });
+  }
+  
   if (skills.length === 0) return '';
   const list = skills.map((s) => `- ${s.name}: ${s.description}`).join('\n');
   return `<available_skills>\n${list}\n</available_skills>\n\n`;

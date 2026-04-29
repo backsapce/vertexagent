@@ -3,7 +3,8 @@ import { checkAgentAvailable, connectAgent } from '../../models/agent';
 import { exportToZip, importFromZip } from '../../vfs/opfs';
 import { useI18n } from '../../i18n/context';
 import { SUPPORTED_LOCALES } from '../../i18n/locales';
-import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User, Cloud } from '../Icons/Icons';
+import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User, Cloud, Layers } from '../Icons/Icons';
+import { listAllSkills, setSkillEnabled } from '../../agent/skills';
 import './Settings.css';
 
 const Settings = ({
@@ -51,6 +52,31 @@ const Settings = ({
   const [e2bApiKeyInput, setE2bApiKeyInput] = useState('');
   const [e2bEnabling, setE2bEnabling] = useState(false);
   const [e2bLocalError, setE2bLocalError] = useState(null);
+  const [skillsList, setSkillsList] = useState([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+
+  // Load skills when tab changes to skills
+  useEffect(() => {
+    if (settingsTab === 'skills') {
+      setSkillsLoading(true);
+      listAllSkills()
+        .then((skills) => setSkillsList(skills))
+        .catch((err) => console.error('Failed to load skills:', err))
+        .finally(() => setSkillsLoading(false));
+    }
+  }, [settingsTab]);
+
+  const handleSkillToggle = async (skillName, enabled) => {
+    await setSkillEnabled(skillName, enabled);
+    setSkillsList((prev) => prev.map((s) => (s.name === skillName ? { ...s, enabled } : s)));
+  };
+
+  const handleBulkToggle = async (enabled) => {
+    for (const skill of skillsList) {
+      await setSkillEnabled(skill.name, enabled);
+    }
+    setSkillsList((prev) => prev.map((s) => ({ ...s, enabled })));
+  };
 
   // Initialize form when opening
   useEffect(() => {
@@ -291,6 +317,13 @@ const Settings = ({
             >
               <Globe width={16} height={16} />
               {t('settings.language')}
+            </button>
+            <button
+              className={`settings-nav-item ${settingsTab === 'skills' ? 'active' : ''}`}
+              onClick={() => setSettingsTab('skills')}
+            >
+              <Layers width={16} height={16} />
+              {t('settings.skills')}
             </button>
           </nav>
         </div>
@@ -739,6 +772,59 @@ const Settings = ({
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+          {settingsTab === 'skills' && (
+            <div className="settings-section">
+              <h3>{t('skillSettings.title')}</h3>
+              <p className="settings-desc">{t('skillSettings.desc')}</p>
+
+              {skillsLoading && (
+                <div className="skills-loading">{t('filemanage.loading')}</div>
+              )}
+
+              {!skillsLoading && skillsList.length === 0 && (
+                <div className="agents-empty">{t('skillSettings.empty')}</div>
+              )}
+
+              {!skillsLoading && skillsList.length > 0 && (
+                <>
+                  <div className="skills-bulk-actions">
+                    <button
+                      className="skills-bulk-btn"
+                      onClick={() => handleBulkToggle(true)}
+                    >
+                      {t('skillSettings.enableAll')}
+                    </button>
+                    <button
+                      className="skills-bulk-btn"
+                      onClick={() => handleBulkToggle(false)}
+                    >
+                      {t('skillSettings.disableAll')}
+                    </button>
+                  </div>
+
+                  <div className="skills-list">
+                    {skillsList.map((skill) => (
+                      <div key={skill.name} className={`skill-item ${skill.enabled ? 'enabled' : 'disabled'}`}>
+                        <div className="skill-info">
+                          <div className="skill-name">{skill.name}</div>
+                          <div className="skill-desc">{skill.description}</div>
+                          <div className="skill-version">{t('skillSettings.version')}: {skill.version}</div>
+                        </div>
+                        <label className="skill-toggle">
+                          <input
+                            type="checkbox"
+                            checked={skill.enabled}
+                            onChange={(e) => handleSkillToggle(skill.name, e.target.checked)}
+                          />
+                          <span className="skill-toggle-slider"></span>
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
