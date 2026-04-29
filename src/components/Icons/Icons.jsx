@@ -293,4 +293,13 @@ export const Layers = ({ width = 16, height = 16, className = '' }) => (
   </IconBase>
 );
 
+// Menu / Hamburger Icon
+export const Menu = ({ width = 20, height = 20, className = '' }) => (
+  <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
+    <line x1="3" y1="6" x2="21" y2="6" />
+    <line x1="3" y1="12" x2="21" y2="12" />
+    <line x1="3" y1="18" x2="21" y2="18" />
+  </IconBase>
+);
+
 // Empty State Icons

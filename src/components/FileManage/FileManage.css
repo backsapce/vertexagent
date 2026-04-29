@@ -18,6 +18,52 @@
   opacity: 1;
 }
 
+/* Mobile full overlay mode */
+@media (max-width: 768px) {
+  .filemanage-panel.show {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 900;
+    border-left: none;
+    animation: overlay-slide-in 0.3s ease;
+  }
+}
+
+@keyframes overlay-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Mobile backdrop */
+.filemanage-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 899;
+  background: var(--color-overlay);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.filemanage-backdrop.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .filemanage-header {
   display: flex;
   align-items: center;

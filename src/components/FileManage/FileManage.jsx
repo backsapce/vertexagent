@@ -6,6 +6,9 @@ import { ChevronRight, ChevronDown, Folder, File, FilePlus, FolderPlus, Refresh,
 import FileEditor from './FileEditor';
 import './FileManage.css';
 
+// Breakpoint for mobile/tablet
+const MOBILE_BREAKPOINT = 768;
+
 function triggerDownload(blob, fileName) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -20,6 +23,18 @@ function triggerDownload(blob, fileName) {
 const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => {
   const { t } = useI18n();
   const [fileSource, setFileSource] = useState('local');
+  const [isMobile, setIsMobile] = useState(false);
+  const panelRef = useRef(null);
+
+  // Check screen size
+  useEffect(() => {
+    const checkScreen = () => {
+      setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    };
+    checkScreen();
+    window.addEventListener('resize', checkScreen);
+    return () => window.removeEventListener('resize', checkScreen);
+  }, []);
   const [fileTree, setFileTree] = useState(null);
   const [expandedDirs, setExpandedDirs] = useState(new Set());
   const expandedDirsRef = useRef(new Set());
@@ -317,7 +332,12 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
   if (!show) return null;
 
   return (
-    <div className={`filemanage-panel ${show ? 'show' : ''}`} style={{ '--panel-width': `${width}px` }}>
+    <>
+      {/* Backdrop for mobile */}
+      {isMobile && (
+        <div className="filemanage-backdrop show" onClick={onClose} />
+      )}
+      <div ref={panelRef} className={`filemanage-panel ${show ? 'show' : ''}`} style={{ '--panel-width': `${width}px` }}>
       <div className="filemanage-header">
         <div className="filemanage-header-left">
           <div className="filemanage-source-selector">
@@ -357,9 +377,12 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
         </div>
       </div>
 
-      <div className={`filemanage-resize-handle ${isResizing ? 'resizing' : ''}`} onMouseDown={handleMouseDown} />
+      {!isMobile && (
+        <div className={`filemanage-resize-handle ${isResizing ? 'resizing' : ''}`} onMouseDown={handleMouseDown} />
+      )}
       <FileEditor show={editorOpen} onClose={handleEditorClose} fileName={editingFile?.fileName} filePath={editingFile?.filePath} fileSource={fileSource} onSave={handleEditorSave} />
     </div>
+    </>
   );
 };
 

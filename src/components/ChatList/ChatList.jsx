@@ -1,12 +1,40 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useI18n } from '../../i18n/context';
-import { Plus, X } from '../Icons/Icons';
+import { Plus, X, Menu } from '../Icons/Icons';
 import './ChatList.css';
+
+// Breakpoint for mobile/tablet
+const MOBILE_BREAKPOINT = 768;
 
 const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat }) => {
   const { t } = useI18n();
   const [width, setWidth] = useState(280);
   const [isResizing, setIsResizing] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const panelRef = useRef(null);
+
+  // Check screen size
+  useEffect(() => {
+    const checkScreen = () => {
+      const mobile = window.innerWidth <= MOBILE_BREAKPOINT;
+      setIsMobile(mobile);
+      if (!mobile) {
+        setMobileOpen(false);
+      }
+    };
+    checkScreen();
+    window.addEventListener('resize', checkScreen);
+    return () => window.removeEventListener('resize', checkScreen);
+  }, []);
+
+  // Close mobile panel on chat select
+  const handleSelectChat = useCallback((chatId) => {
+    onSelectChat(chatId);
+    if (isMobile) {
+      setMobileOpen(false);
+    }
+  }, [onSelectChat, isMobile]);
 
   const handleMouseDown = useCallback((e) => {
     e.preventDefault();
@@ -25,6 +53,20 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat }
     setIsResizing(false);
   }, []);
 
+  // Close panel when clicking outside on mobile
+  useEffect(() => {
+    if (!isMobile || !mobileOpen) return;
+
+    const handleClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) {
+        setMobileOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMobile, mobileOpen]);
+
   // Global mouse event listeners for resizing
   useEffect(() => {
     window.addEventListener('mousemove', handleMouseMove);
@@ -35,50 +77,78 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat }
     };
   }, [handleMouseMove, handleMouseUp]);
 
+  // Toggle mobile panel
+  const toggleMobile = useCallback(() => {
+    setMobileOpen(prev => !prev);
+  }, []);
+
   return (
-    <div className="chat-list" style={{ width, minWidth: width }}>
-      <div className="chat-list-header">
-        <h2>{t('app.name')}</h2>
-        <button className="new-chat-btn" onClick={onNewChat} title={t('chat.newChat')}>
-          <Plus width={20} height={20} />
-        </button>
-      </div>
-      <div className="chat-list-items">
-        {chats.map((chat) => (
-          <div
-            key={chat.id}
-            className={`chat-item ${chat.id === activeChatId ? 'active' : ''}`}
-            onClick={() => onSelectChat(chat.id)}
-          >
-            <div className="chat-item-row">
-              <div className="chat-item-title">{chat.title}</div>
-              <button
-                className="chat-item-delete"
-                title={t('chat.deleteChat')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteChat(chat.id);
-                }}
-              >
-                <X width={14} height={14} />
-              </button>
+    <>
+      {/* Toggle button - visible only on mobile */}
+      <button
+        className={`chat-list-toggle-btn ${mobileOpen ? 'open' : ''}`}
+        onClick={toggleMobile}
+        aria-label="Toggle chat list"
+      >
+        <Menu width={20} height={20} />
+      </button>
+
+      {/* Backdrop */}
+      {isMobile && mobileOpen && (
+        <div className="chat-list-backdrop show" onClick={() => setMobileOpen(false)} />
+      )}
+
+      {/* Chat list panel */}
+      <div
+        ref={panelRef}
+        className={`chat-list ${isMobile && mobileOpen ? 'mobile-open' : ''}`}
+        style={!isMobile ? { width, minWidth: width } : {}}
+      >
+        <div className="chat-list-header">
+          <h2>{t('app.name')}</h2>
+          <button className="new-chat-btn" onClick={onNewChat} title={t('chat.newChat')}>
+            <Plus width={20} height={20} />
+          </button>
+        </div>
+        <div className="chat-list-items">
+          {chats.map((chat) => (
+            <div
+              key={chat.id}
+              className={`chat-item ${chat.id === activeChatId ? 'active' : ''}`}
+              onClick={() => handleSelectChat(chat.id)}
+            >
+              <div className="chat-item-row">
+                <div className="chat-item-title">{chat.title}</div>
+                <button
+                  className="chat-item-delete"
+                  title={t('chat.deleteChat')}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteChat(chat.id);
+                  }}
+                >
+                  <X width={14} height={14} />
+                </button>
+              </div>
+              <div className="chat-item-preview">{chat.lastMessage || t('chat.noMessages')}</div>
+              <div className="chat-item-time">{chat.updatedAt}</div>
             </div>
-            <div className="chat-item-preview">{chat.lastMessage || t('chat.noMessages')}</div>
-            <div className="chat-item-time">{chat.updatedAt}</div>
-          </div>
-        ))}
-        {chats.length === 0 && (
-          <div className="chat-list-empty">
-            <p>{t('chat.noConversations')}</p>
-            <p>{t('chat.clickToStart')}</p>
-          </div>
+          ))}
+          {chats.length === 0 && (
+            <div className="chat-list-empty">
+              <p>{t('chat.noConversations')}</p>
+              <p>{t('chat.clickToStart')}</p>
+            </div>
+          )}
+        </div>
+        {!isMobile && (
+          <div
+            className={`chat-list-resize-handle ${isResizing ? 'resizing' : ''}`}
+            onMouseDown={handleMouseDown}
+          />
         )}
       </div>
-      <div
-        className={`chat-list-resize-handle ${isResizing ? 'resizing' : ''}`}
-        onMouseDown={handleMouseDown}
-      />
-    </div>
+    </>
   );
 };
 
