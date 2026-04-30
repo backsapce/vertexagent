@@ -549,6 +549,11 @@
   font-weight: 500;
 }
 
+.thinking-elapsed {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
 .thinking-dots {
   display: inline-flex;
   margin-left: 1px;

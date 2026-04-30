@@ -18,6 +18,7 @@
         "you": "You",
         "assistant": "Vertex Agent",
         "thinking": "Thinking",
+    "thoughtFor": "Thought for {seconds}",
         "execute": "Execute:",
         "running": "running...",
         "completed": "completed",

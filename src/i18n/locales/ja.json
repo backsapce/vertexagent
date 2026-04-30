@@ -18,6 +18,7 @@
         "you": "あなた",
         "assistant": "Vertex Agent",
         "thinking": "思考中",
+    "thoughtFor": "思考時間 {seconds}",
         "execute": "実行：",
         "running": "実行中...",
         "completed": "完了",

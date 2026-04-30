@@ -24,6 +24,7 @@
  *   // result.content, result.thinking, result.toolCalls
  */
 
+import { getContext } from 'tokenlens';
 import llm from '../models/llm';
 import { registry } from './tools.js';
 import { assembleApiMessages } from './context.js';
@@ -43,6 +44,7 @@ const DEFAULT_MAX_ROUNDS = 10;
  * @param {AbortSignal} [opts.signal] - Abort signal for cancellation
  * @param {number} [opts.maxRounds] - Max tool execution rounds (default 10)
  * @param {string} [opts.provider] - Provider id for context window estimation
+ * @param {string} [opts.model] - Model id for accurate context window lookup
  * @returns {Promise<{ content: string, thinking: string, toolCalls: Array }>}
  */
 export async function runAgentLoop(opts) {
@@ -60,8 +62,8 @@ export async function runAgentLoop(opts) {
   // Load skills list
   const skillsList = await buildSkillsSection();
 
-  // Context window by provider
-  const contextWindow = getContextWindow(opts.provider);
+  // Context window by provider + model (tokenlens with fallback)
+  const contextWindow = getContextWindow(opts.provider, opts.model);
 
   // Track accumulated tool calls for this agent loop invocation
   const allToolCalls = {}; // id -> { id, name, status, result? }
@@ -174,6 +176,7 @@ export async function runAgentLoop(opts) {
     prompt_tokens: totalPromptTokens,
     completion_tokens: totalCompletionTokens,
     total_tokens: totalTokens,
+    content_len: contextWindow,
   } : null;
 
   return { content: finalContent, thinking: finalThinking, toolCalls: Object.values(allToolCalls), usage: usageSummary };
@@ -313,19 +316,62 @@ function getAvailableToolSchemas(agentUrl) {
     }));
 }
 
+// Map app provider IDs to tokenlens provider prefixes
+const TOKENLENS_PROVIDER = {
+  openai: 'openai',
+  anthropic: 'anthropic',
+  gemini: 'google',
+  qwen: 'alibaba',
+  openrouter: 'openrouter',
+};
+
+// Fallback context windows when tokenlens doesn't have the model
+const FALLBACK_WINDOWS = {
+  anthropic: 200_000,
+  openai: 128_000,
+  gemini: 1_000_000,
+  openrouter: 128_000,
+  qwen: 1_000_000,
+  'custom-openai': 128_000,
+};
+
+// Per-model overrides for known models not yet in tokenlens
+function modelFallbackWindow(model) {
+  const m = model?.toLowerCase() || '';
+  if (m.startsWith('qwen3.5') || m.startsWith('qwen3-5')) return 1_000_000;
+  if (m.startsWith('qwen3.6') || m.startsWith('qwen3-6')) return 1_000_000;
+  if (m.startsWith('qwen3-') || m.startsWith('qwen-m') || m.startsWith('qwen-p')) return 262_144;
+  if (m === 'qwen-turbo') return 262_144;
+  return null;
+}
+
 /**
- * Estimate context window size by provider/model.
- * Falls back to a conservative default.
+ * Get the context window size for a provider/model pair.
+ * Tries tokenlens catalog first, falls back to model-specific, then provider defaults.
  */
-function getContextWindow(provider) {
-  // Rough estimates based on common models
-  const WINDOWS = {
-    anthropic: 200_000,
-    openai: 128_000,
-    gemini: 1_000_000,
-    openrouter: 128_000,
-    qwen: 32_000,
-    'custom-openai': 128_000,
-  };
-  return WINDOWS[provider] || 128_000;
+function getContextWindow(provider, model) {
+  if (model) {
+    const tlProvider = TOKENLENS_PROVIDER[provider];
+    const ids = [];
+    if (tlProvider) {
+      ids.push(`${tlProvider}:${model}`);
+      ids.push(`${tlProvider}:${model.replace(/(\d)\.(\d)/g, '$1-$2')}`);
+    }
+    ids.push(model);
+    ids.push(model.replace(/(\d)\.(\d)/g, '$1-$2'));
+
+    for (const mid of ids) {
+      try {
+        const ctx = getContext({ modelId: mid });
+        if (ctx.maxTotal || ctx.combinedMax) {
+          return ctx.maxTotal || ctx.combinedMax;
+        }
+      } catch { /* tokenlens miss — try next id */ }
+    }
+
+    const modelWindow = modelFallbackWindow(model);
+    if (modelWindow) return modelWindow;
+  }
+
+  return FALLBACK_WINDOWS[provider] || 128_000;
 }

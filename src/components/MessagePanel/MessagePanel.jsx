@@ -73,18 +73,19 @@ const ContextBudget = ({ messages }) => {
   // Check if the last assistant message has real usage data from the API
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && m.usage);
   const estimated = estimateTokens(messages);
-  const total = DEFAULT_CONTEXT_WINDOW;
 
-  let used, ratio, label;
+  let used, total, ratio, tooltip;
   if (lastAssistant?.usage) {
     const u = lastAssistant.usage;
     used = u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || u.output_tokens || 0);
+    total = u.content_len || DEFAULT_CONTEXT_WINDOW;
     ratio = Math.min(used / total, 1);
-    label = `${u.prompt_tokens || '?'} in / ${u.completion_tokens || u.output_tokens || '?'} out`;
+    tooltip = `${formatTokens(used)} / ${formatTokens(total)}`;
   } else {
     used = estimated;
+    total = DEFAULT_CONTEXT_WINDOW;
     ratio = Math.min(used / total, 1);
-    label = null;
+    tooltip = `~${formatTokens(used)} / ${formatTokens(total)} (estimated)`;
   }
 
   const percent = Math.round(ratio * 100);
@@ -94,24 +95,14 @@ const ContextBudget = ({ messages }) => {
   if (ratio > 0.85) color = 'var(--color-error, #e53935)';
   else if (ratio > 0.6) color = 'var(--color-warning, #fb8c00)';
 
-  const formatTokens = (n) => {
+  function formatTokens(n) {
     if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
     return n.toString();
-  };
+  }
 
   return (
     <div className="context-budget">
-      <div className="context-budget-tooltip">
-        {label ? (
-          <>
-            {formatTokens(used)} total — {label}
-          </>
-        ) : (
-          <>
-            ~{formatTokens(used)} / {formatTokens(total)} (estimated)
-          </>
-        )}
-      </div>
+      <div className="context-budget-tooltip">{tooltip}</div>
       <div className="context-budget-pie">
         <PieChart size={26} ratio={ratio} color={color} />
         <span className="context-budget-pct" style={{ color }}>{percent}</span>
@@ -120,16 +111,55 @@ const ContextBudget = ({ messages }) => {
   );
 };
 
+function formatDuration(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 const ThinkingBlock = ({ thinking, isThinking }) => {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
+  const startTimeRef = useRef(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (isThinking) {
+      if (!startTimeRef.current) startTimeRef.current = Date.now();
+      const timer = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      }, 200);
+      return () => clearInterval(timer);
+    } else {
+      if (startTimeRef.current && thinking) {
+        setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      }
+      startTimeRef.current = null;
+    }
+  }, [isThinking, thinking]);
+
   if (!thinking && !isThinking) return null;
+
+  const labelText = isThinking
+    ? t('message.thinking')
+    : thinking
+      ? t('message.thoughtFor', { seconds: formatDuration(elapsed) })
+      : null;
+
   return (
     <div className="thinking-block">
       <button className="thinking-toggle" onClick={() => setExpanded((v) => !v)}>
         <ChevronRight className={`thinking-chevron ${expanded ? 'expanded' : ''}`} width={14} height={14} />
         <span className="thinking-label">
-          {t('message.thinking')}{isThinking && <span className="thinking-dots"><span>.</span><span>.</span><span>.</span></span>}
+          {labelText}
+          {isThinking && (
+            <>
+              {' '}
+              <span className="thinking-elapsed">{formatDuration(elapsed)}</span>
+              <span className="thinking-dots"><span>.</span><span>.</span><span>.</span></span>
+            </>
+          )}
         </span>
       </button>
       {expanded && (

@@ -262,6 +262,7 @@ function App() {
         agentUrl: selectedAgentRef.current,
         signal: controller.signal,
         provider: activeConfig.provider,
+        model: activeConfig.model,
         onUpdate: ({ content, thinking, toolCalls: tcList }) => {
           streamingContentRef.current = content;
           if (thinking) streamingThinkingRef.current = thinking;
