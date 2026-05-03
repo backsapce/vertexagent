@@ -1,6 +1,6 @@
 
 // Base Icon component with common props
-const IconBase = ({ children, width, height, viewBox, className, ...props }) => (
+const IconBase = ({ children, width, height, viewBox, className, style, ...props }) => (
   <svg
     width={width}
     height={height}
@@ -11,6 +11,7 @@ const IconBase = ({ children, width, height, viewBox, className, ...props }) => 
     strokeLinecap="round"
     strokeLinejoin="round"
     className={className}
+    style={{ transform: 'translateZ(0)', ...style }}
     {...props}
   >
     {children}
@@ -255,14 +256,14 @@ export const Send = ({ width = 20, height = 20, className = '' }) => (
 );
 
 export const Stop = ({ width = 20, height = 20, className = '' }) => (
-  <svg width={width} height={height} viewBox="0 0 24 24" fill="currentColor" className={className}>
+  <svg width={width} height={height} viewBox="0 0 24 24" fill="currentColor" className={className} style={{ transform: 'translateZ(0)' }}>
     <rect x="6" y="6" width="12" height="12" rx="2" />
   </svg>
 );
 
 // Context budget bar icon (rect, not battery)
 export const Battery = ({ width = 22, height = 14, ratio = 0, color = 'currentColor', className = '' }) => (
-  <svg width={width} height={height} viewBox="0 0 22 14" fill="none" className={className}>
+  <svg width={width} height={height} viewBox="0 0 22 14" fill="none" className={className} style={{ transform: 'translateZ(0)' }}>
     <rect x="0.5" y="1" width="21" height="12" rx="2" stroke="currentColor" strokeWidth="1.2" fill="none" />
     <rect x="2" y="2.8" width={Math.max(17 * ratio, 0)} height="8.4" rx="1" fill={color} opacity="0.85" />
   </svg>
@@ -285,7 +286,7 @@ export const WifiOff = ({ width = 16, height = 16, className = '' }) => (
 
 // Loading / Spinner Icon
 export const Spinner = ({ width = 16, height = 16, className = '' }) => (
-  <svg width={width} height={height} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className}>
+  <svg width={width} height={height} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className} style={{ transform: 'translateZ(0)' }}>
     <path d="M21 12a9 9 0 1 1-6.219-8.56" />
   </svg>
 );
@@ -300,7 +301,7 @@ export const PieChart = ({ size = 28, ratio = 0, color = 'currentColor', classNa
   const offset = circumference * (1 - ratio);
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} fill="none" className={className}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} fill="none" className={className} style={{ transform: 'translateZ(0)' }}>
       {/* Background circle */}
       <circle cx={cx} cy={cy} r={radius} stroke="currentColor" strokeWidth={stroke} opacity="0.15" fill="none" />
       {/* Foreground arc */}

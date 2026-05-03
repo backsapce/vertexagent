@@ -23,61 +23,6 @@
   box-shadow: 0 20px 60px var(--color-shadow);
 }
 
-/* Mobile responsive for settings panel */
-@media (max-width: 768px) {
-  .settings-panel {
-    width: 95vw;
-    max-width: 95vw;
-    height: 90vh;
-    max-height: 90vh;
-    flex-direction: column;
-    border-radius: 12px 12px 0 0;
-    bottom: 0;
-    top: auto;
-  }
-
-  .settings-sidebar {
-    width: 100%;
-    min-width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--color-border);
-    flex-direction: row;
-    overflow-x: auto;
-    padding: 4px 0;
-  }
-
-  .settings-sidebar-header {
-    display: none;
-  }
-
-  .settings-nav {
-    display: flex;
-    flex-direction: row;
-    padding: 0 8px;
-    gap: 4px;
-    overflow-x: auto;
-  }
-
-  .settings-nav-item {
-    padding: 8px 12px;
-    white-space: nowrap;
-    font-size: 12px;
-  }
-
-  .settings-content {
-    padding: 16px;
-  }
-
-  .theme-options {
-    flex-wrap: wrap;
-  }
-
-  .theme-option {
-    min-width: 80px;
-    flex: 1;
-  }
-}
-
 /* Left sidebar */
 .settings-sidebar {
   width: 200px;
@@ -1108,4 +1053,85 @@
 .agent-remove-btn:hover {
   color: var(--color-error);
   background: rgba(239, 68, 68, 0.1);
+}
+
+/* ─── Mobile responsive ─────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .settings-panel {
+    position: fixed;
+    width: 95vw;
+    max-width: 95vw;
+    height: 90vh;
+    max-height: 90vh;
+    flex-direction: column;
+    border-radius: 12px 12px 0 0;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .settings-sidebar {
+    width: 100%;
+    min-width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+    flex-direction: row;
+    align-items: center;
+    padding: 0;
+    min-height: 42px;
+  }
+
+  .settings-sidebar-header {
+    display: none;
+  }
+
+  .settings-nav {
+    display: flex;
+    flex-direction: row;
+    padding: 0 36px 0 8px;
+    gap: 4px;
+    overflow-x: auto;
+    align-items: center;
+  }
+
+  .settings-nav-item {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px 10px;
+    white-space: nowrap;
+    font-size: 12px;
+    line-height: 1;
+    height: 30px;
+    min-height: 30px;
+    width: auto;
+    flex-shrink: 0;
+  }
+
+  .settings-nav-item svg {
+    flex-shrink: 0;
+    display: block;
+    vertical-align: middle;
+  }
+
+  .settings-close-btn {
+    top: 8px;
+    right: 8px;
+    z-index: 200;
+  }
+
+  .settings-content {
+    padding: 16px;
+  }
+
+  .theme-options {
+    flex-wrap: wrap;
+  }
+
+  .theme-option {
+    min-width: 80px;
+    flex: 1;
+  }
 }
