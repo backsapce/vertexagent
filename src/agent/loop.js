@@ -30,6 +30,8 @@ import { registry } from './tools.js';
 import { assembleApiMessages } from './context.js';
 import { loadMemory } from './memory.js';
 import { buildSkillsSection } from './skills.js';
+import { readAgentAgentsFile } from '../vfs/opfs.js';
+import { getWorkspaceDirName } from '../agents/agents.js';
 
 const DEFAULT_MAX_ROUNDS = 10;
 
@@ -40,6 +42,7 @@ const DEFAULT_MAX_ROUNDS = 10;
  * @param {Array} opts.messages - Current chat messages
  * @param {string} opts.systemPrompt - Base system prompt
  * @param {string} [opts.agentUrl] - Agent server URL (null if no agent)
+ * @param {string} [opts.agentId] - Agent workspace ID (for memory/file scoping)
  * @param {Function} [opts.onUpdate] - Callback for streaming updates
  * @param {AbortSignal} [opts.signal] - Abort signal for cancellation
  * @param {number} [opts.maxRounds] - Max tool execution rounds (default 10)
@@ -52,15 +55,21 @@ export async function runAgentLoop(opts) {
     messages,
     systemPrompt,
     agentUrl = null,
+    agentId = null,
     onUpdate = () => {},
     signal = null,
     maxRounds = DEFAULT_MAX_ROUNDS,
   } = opts;
 
+  // Resolve workspace directory name from agent's current display name
+  const workspaceDirName = agentId ? await getWorkspaceDirName(agentId) : null;
+
   // Load memory snapshot (frozen for this session)
-  const memorySnapshot = await loadMemory();
-  // Load skills list
-  const skillsList = await buildSkillsSection();
+  const memorySnapshot = await loadMemory(agentId);
+  // Load skills list (global + agent-specific)
+  const skillsList = await buildSkillsSection(agentId);
+  // Load agent identity (AGENTS.md)
+  const agentIdentity = agentId ? await readAgentAgentsFile(agentId) : null;
 
   // Context window by provider + model (tokenlens with fallback)
   const contextWindow = getContextWindow(opts.provider, opts.model);
@@ -81,11 +90,12 @@ export async function runAgentLoop(opts) {
       systemPrompt,
       memorySnapshot,
       skillsList,
+      agentIdentity,
       contextWindow,
     });
 
   // Get tool schemas (filter by availability)
-  const toolSchemas = getAvailableToolSchemas(agentUrl);
+  const toolSchemas = getAvailableToolSchemas(agentUrl, agentId);
 
   for (let round = 0; round <= maxRounds; round++) {
     // Stream LLM response
@@ -122,6 +132,8 @@ export async function runAgentLoop(opts) {
       try {
         const result = await registry.dispatch(tc.name, tc.parsedArgs, {
           agentUrl,
+          agentId,
+          agentName: workspaceDirName,
         });
         const resultStr = String(result);
         toolResults.push({
@@ -166,6 +178,7 @@ export async function runAgentLoop(opts) {
       systemPrompt: systemPrompt,
       memorySnapshot,
       skillsList,
+      agentIdentity,
       contextWindow,
     });
     apiMessages = ctxResult.apiMessages;
@@ -304,8 +317,8 @@ function finalizeToolCalls(fragments) {
 /**
  * Get available tool schemas filtered by availability.
  */
-function getAvailableToolSchemas(agentUrl) {
-  const context = { agentUrl };
+function getAvailableToolSchemas(agentUrl, agentId) {
+  const context = { agentUrl, agentId };
   return registry
     .getAll()
     .filter((t) => !t.checkAvailable || t.checkAvailable(context))

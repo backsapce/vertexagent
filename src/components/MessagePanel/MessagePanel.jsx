@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useI18n } from '../../i18n/context';
 import Settings from '../Settings/Settings';
 import FileManage from '../FileManage/FileManage';
-import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud } from '../Icons/Icons';
+import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud, User } from '../Icons/Icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
@@ -243,6 +243,11 @@ const MessagePanel = ({
   onToggleFileManage,
   nickname,
   onNicknameChange,
+  agentList,
+  agentId,
+  onAgentChange,
+  onAgentListChange: _onAgentListChange,
+  activeChatId,
 }) => {
   const { t } = useI18n();
   const [input, setInput] = useState('');
@@ -341,6 +346,20 @@ const MessagePanel = ({
             ? `${llmConfig.provider} / ${llmConfig.model}`
             : t('message.noProviderConfigured')}
         </span>
+        {agentList.length > 0 && (
+          <div className="agent-selector">
+            <User width={14} height={14} />
+            <select
+              value={agentId || ''}
+              onChange={(e) => onAgentChange?.(activeChatId, e.target.value || null)}
+              title="Select agent"
+            >
+              {agentList.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="header-buttons">
           <button className="settings-btn" onClick={() => setShowSettings(true)} title={t('settings.title')}>

@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n/context';
 import { SUPPORTED_LOCALES } from '../../i18n/locales';
 import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User, Cloud, Layers } from '../Icons/Icons';
 import { listAllSkills, setSkillEnabled } from '../../agent/skills';
+import { createAgent, deleteAgent, updateAgentName, listAgents } from '../../agents/agents';
 import './Settings.css';
 
 const Settings = ({
@@ -22,6 +23,8 @@ const Settings = ({
   onFactoryReset,
   nickname,
   onNicknameChange,
+  agentList: _agentList,
+  onAgentListChange,
 }) => {
   const { t, localePref, changeLocale } = useI18n();
   const [settingsTab, setSettingsTab] = useState('llm');
@@ -54,6 +57,51 @@ const Settings = ({
   const [e2bLocalError, setE2bLocalError] = useState(null);
   const [skillsList, setSkillsList] = useState([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
+  const [agentsTabList, setAgentsTabList] = useState([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [editingAgentId, setEditingAgentId] = useState(null);
+  const [editingAgentName, setEditingAgentName] = useState('');
+
+  // Load agents when tab changes to agents
+  useEffect(() => {
+    if (settingsTab === 'agents') {
+      setAgentsLoading(true);
+      listAgents()
+        .then((list) => setAgentsTabList(list))
+        .catch((err) => console.error('Failed to load agents:', err))
+        .finally(() => setAgentsLoading(false));
+    }
+  }, [settingsTab]);
+
+  const handleCreateAgent = async () => {
+    await createAgent();
+    const updated = await listAgents();
+    setAgentsTabList(updated);
+    onAgentListChange?.(updated);
+  };
+
+  const handleDeleteAgent = async (id) => {
+    if (agentsTabList.length <= 1) return;
+    await deleteAgent(id);
+    const updated = await listAgents();
+    setAgentsTabList(updated);
+    onAgentListChange?.(updated);
+  };
+
+  const handleStartEditAgent = (agent) => {
+    setEditingAgentId(agent.id);
+    setEditingAgentName(agent.name);
+  };
+
+  const handleSaveAgentName = async (id) => {
+    if (!editingAgentName.trim()) return;
+    await updateAgentName(id, editingAgentName.trim());
+    setEditingAgentId(null);
+    setEditingAgentName('');
+    const updated = await listAgents();
+    setAgentsTabList(updated);
+    onAgentListChange?.(updated);
+  };
 
   // Load skills when tab changes to skills
   useEffect(() => {
@@ -317,6 +365,16 @@ const Settings = ({
             >
               <Globe width={16} height={16} />
               {t('settings.language')}
+            </button>
+            <button
+              className={`settings-nav-item ${settingsTab === 'agents' ? 'active' : ''}`}
+              onClick={() => setSettingsTab('agents')}
+            >
+              <User width={16} height={16} />
+              {t('settings.agents')}
+              {agentsTabList.length > 0 && (
+                <span className="settings-nav-count">{agentsTabList.length}</span>
+              )}
             </button>
             <button
               className={`settings-nav-item ${settingsTab === 'skills' ? 'active' : ''}`}
@@ -772,6 +830,80 @@ const Settings = ({
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+          {settingsTab === 'agents' && (
+            <div className="settings-section">
+              <h3>{t('agentSettings.title')}</h3>
+              <p className="settings-desc">{t('agentSettings.desc')}</p>
+
+              {agentsLoading && (
+                <div className="skills-loading">{t('filemanage.loading')}</div>
+              )}
+
+              {!agentsLoading && agentsTabList.length === 0 && (
+                <div className="sandboxes-empty">{t('agentSettings.empty')}</div>
+              )}
+
+              {!agentsLoading && agentsTabList.length > 0 && (
+                <>
+                  <div className="agents-actions">
+                    <button
+                      className="agent-add-btn"
+                      onClick={handleCreateAgent}
+                    >
+                      {t('agentSettings.addAgent')}
+                    </button>
+                  </div>
+
+                  <div className="agents-list">
+                    {agentsTabList.map((agent) => (
+                      <div key={agent.id} className="agent-item">
+                        <div className="agent-info">
+                          {editingAgentId === agent.id ? (
+                            <div className="agent-edit-row">
+                              <input
+                                type="text"
+                                value={editingAgentName}
+                                onChange={(e) => setEditingAgentName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveAgentName(agent.id);
+                                  if (e.key === 'Escape') setEditingAgentId(null);
+                                }}
+                                autoFocus
+                                className="agent-name-input"
+                              />
+                              <button className="agent-save-btn" onClick={() => handleSaveAgentName(agent.id)}>
+                                {t('settings.save')}
+                              </button>
+                              <button className="agent-cancel-btn" onClick={() => setEditingAgentId(null)}>
+                                {t('sandboxSettings.cancel')}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="agent-name" onClick={() => handleStartEditAgent(agent)}>
+                              {agent.name}
+                            </div>
+                          )}
+                          <div className="agent-meta">
+                            {t('agentSettings.created')} {new Date(agent.createdAt).toLocaleDateString()}
+                          </div>
+                          <div className="agent-id-label">{agent.id}</div>
+                        </div>
+                        {agentsTabList.length > 1 && (
+                          <button
+                            className="agent-remove-btn"
+                            onClick={() => handleDeleteAgent(agent.id)}
+                            title={t('agentSettings.removeAgent')}
+                          >
+                            <X width={14} height={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
           {settingsTab === 'skills' && (

@@ -4,6 +4,7 @@
  */
 
 import JSZip from 'jszip';
+import { getWorkspaceDirName } from '../agents/agents.js';
 
 const ROOT_DIR = 'vertex-agent';
 
@@ -545,4 +546,218 @@ export async function readSkillRef(skillName, filename) {
   } catch {
     return null;
   }
+}
+
+// ─── Agent Workspace Operations ───────────────────────────────────────────────
+
+const WORKSPACE_DIR = 'workspace';
+
+/**
+ * Resolve the workspace directory name for an agent (uses the agent's current display name).
+ * @param {string} agentId
+ * @returns {Promise<string>}
+ */
+async function resolveWorkspaceName(agentId) {
+  try {
+    return await getWorkspaceDirName(agentId);
+  } catch {
+    return agentId;
+  }
+}
+
+/**
+ * Get a directory handle within an agent's workspace.
+ * @param {string} agentId
+ * @param  {...string} pathParts
+ * @returns {Promise<FileSystemDirectoryHandle>}
+ */
+export async function getAgentDir(agentId, ...pathParts) {
+  const name = await resolveWorkspaceName(agentId);
+  return getDirectory(WORKSPACE_DIR, name, ...pathParts);
+}
+
+/**
+ * Get the memory directory for an agent.
+ * @param {string} agentId
+ * @returns {Promise<FileSystemDirectoryHandle>}
+ */
+export async function getAgentMemoryDir(agentId) {
+  const name = await resolveWorkspaceName(agentId);
+  return getDirectory(WORKSPACE_DIR, name, 'memory');
+}
+
+/**
+ * Get the skills directory for an agent.
+ * @param {string} agentId
+ * @returns {Promise<FileSystemDirectoryHandle>}
+ */
+export async function getAgentSkillsDir(agentId) {
+  const name = await resolveWorkspaceName(agentId);
+  return getDirectory(WORKSPACE_DIR, name, 'skills');
+}
+
+/**
+ * Get the files directory for an agent.
+ * @param {string} agentId
+ * @returns {Promise<FileSystemDirectoryHandle>}
+ */
+export async function getAgentFilesDir(agentId) {
+  const name = await resolveWorkspaceName(agentId);
+  return getDirectory(WORKSPACE_DIR, name, 'files');
+}
+
+/**
+ * Read the agent's AGENTS.md identity file.
+ * @param {string} agentId
+ * @returns {Promise<string|null>}
+ */
+export async function readAgentAgentsFile(agentId) {
+  try {
+    const dir = await getAgentDir(agentId);
+    return await readText(dir, 'AGENTS.md');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the agent's AGENTS.md identity file.
+ * @param {string} agentId
+ * @param {string} content
+ */
+export async function writeAgentAgentsFile(agentId, content) {
+  const dir = await getAgentDir(agentId);
+  await writeText(dir, 'AGENTS.md', content);
+}
+
+// Agent-scoped memory operations
+
+export async function readAgentMemoryFile(agentId, filename) {
+  try {
+    const dir = await getAgentMemoryDir(agentId);
+    return await readText(dir, filename);
+  } catch {
+    return null;
+  }
+}
+
+export async function writeAgentMemoryFile(agentId, filename, content) {
+  const dir = await getAgentMemoryDir(agentId);
+  await writeText(dir, filename, content);
+}
+
+export async function deleteAgentMemoryFile(agentId, filename) {
+  try {
+    const dir = await getAgentMemoryDir(agentId);
+    await deleteEntry(dir, filename);
+  } catch { /* ignore */ }
+}
+
+// Agent-scoped skill operations
+
+export async function listAgentSkillDirs(agentId) {
+  try {
+    const dir = await getAgentSkillsDir(agentId);
+    const skills = [];
+    for (const { name, kind } of await listEntries(dir)) {
+      if (kind === 'directory') skills.push({ name, hasReferences: false });
+    }
+    return skills;
+  } catch {
+    return [];
+  }
+}
+
+export async function readAgentSkillFile(agentId, skillName, filename) {
+  try {
+    const dir = await getAgentSkillsDir(agentId);
+    const skillDir = await dir.getDirectoryHandle(skillName);
+    return await readText(skillDir, filename);
+  } catch {
+    return null;
+  }
+}
+
+export async function writeAgentSkillFile(agentId, skillName, filename, content) {
+  const dir = await getAgentSkillsDir(agentId);
+  const skillDir = await dir.getDirectoryHandle(skillName, { create: true });
+  await writeText(skillDir, filename, content);
+}
+
+export async function deleteAgentSkillDir(agentId, skillName) {
+  try {
+    const dir = await getAgentSkillsDir(agentId);
+    await dir.removeEntry(skillName, { recursive: true });
+  } catch { /* ignore */ }
+}
+
+// Agent-scoped file operations
+
+export async function listAgentFiles(agentId, path = '') {
+  const dir = path
+    ? await getAgentDir(agentId, 'files', ...path.split('/').filter(Boolean))
+    : await getAgentFilesDir(agentId);
+  const children = [];
+  for (const { name, kind } of await listEntries(dir)) {
+    if (kind === 'file') {
+      const file = await (await dir.getFileHandle(name)).getFile();
+      children.push({
+        id: `file-${agentId}-${path ? `${path}/` : ''}${name}`,
+        name,
+        type: 'file',
+        size: file.size,
+        lastModified: file.lastModified,
+      });
+    } else {
+      children.push({
+        id: `dir-${agentId}-${path ? `${path}/` : ''}${name}`,
+        name,
+        type: 'directory',
+        children: [],
+      });
+    }
+  }
+  return children;
+}
+
+export async function readAgentFile(agentId, path) {
+  const parts = path.split('/');
+  const fileName = parts.pop();
+  const dir = parts.length > 0
+    ? await getAgentDir(agentId, 'files', ...parts)
+    : await getAgentFilesDir(agentId);
+  return await readText(dir, fileName);
+}
+
+export async function writeAgentFile(agentId, path, content) {
+  const parts = path.split('/');
+  const fileName = parts.pop();
+  const dir = parts.length > 0
+    ? await getAgentDir(agentId, 'files', ...parts)
+    : await getAgentFilesDir(agentId);
+  await writeText(dir, fileName, content);
+}
+
+export async function createAgentFile(agentId, path, isDirectory = false) {
+  const parts = path.split('/');
+  const name = parts.pop();
+  const dir = parts.length > 0
+    ? await getAgentDir(agentId, 'files', ...parts)
+    : await getAgentFilesDir(agentId);
+  if (isDirectory) {
+    await dir.getDirectoryHandle(name, { create: true });
+  } else {
+    await writeText(dir, name, '');
+  }
+}
+
+export async function deleteAgentFile(agentId, path) {
+  const parts = path.split('/');
+  const name = parts.pop();
+  const dir = parts.length > 0
+    ? await getAgentDir(agentId, 'files', ...parts)
+    : await getAgentFilesDir(agentId);
+  try {
+    await dir.removeEntry(name, { recursive: true });
+  } catch { /* ignore */ }
 }

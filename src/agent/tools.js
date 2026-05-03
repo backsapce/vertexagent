@@ -105,10 +105,17 @@ registry.register({
       additionalProperties: false,
     },
   },
-  checkAvailable: (ctx) => !!ctx?.agentUrl,
+  checkAvailable: (ctx) => !!ctx?.agentUrl || !!ctx?.agentId,
   async handler({ path }, ctx) {
-    const { readFileText } = await import('../models/agent');
     try {
+      if (ctx?.agentId && !ctx?.agentUrl) {
+        // Local browser mode: read from agent workspace
+        const { readAgentFile } = await import('../vfs/opfs');
+        const content = await readAgentFile(ctx.agentId, path);
+        return content ?? `File not found: ${path}`;
+      }
+      // Remote sandbox mode
+      const { readFileText } = await import('../models/agent');
       const content = await readFileText(path, ctx.agentUrl);
       return content;
     } catch (err) {
@@ -138,10 +145,17 @@ registry.register({
       additionalProperties: false,
     },
   },
-  checkAvailable: (ctx) => !!ctx?.agentUrl,
+  checkAvailable: (ctx) => !!ctx?.agentUrl || !!ctx?.agentId,
   async handler({ path, content }, ctx) {
-    const { writeFile } = await import('../models/agent');
     try {
+      if (ctx?.agentId && !ctx?.agentUrl) {
+        // Local browser mode: write to agent workspace
+        const { writeAgentFile } = await import('../vfs/opfs');
+        await writeAgentFile(ctx.agentId, path, content);
+        return `Successfully wrote to ${path}`;
+      }
+      // Remote sandbox mode
+      const { writeFile } = await import('../models/agent');
       await writeFile(path, content, ctx.agentUrl);
       return `Successfully wrote to ${path}`;
     } catch (err) {
@@ -167,10 +181,17 @@ registry.register({
       additionalProperties: false,
     },
   },
-  checkAvailable: (ctx) => !!ctx?.agentUrl,
+  checkAvailable: (ctx) => !!ctx?.agentUrl || !!ctx?.agentId,
   async handler({ path = '' }, ctx) {
-    const { listFiles } = await import('../models/agent');
     try {
+      if (ctx?.agentId && !ctx?.agentUrl) {
+        // Local browser mode: list from agent workspace
+        const { listAgentFiles } = await import('../vfs/opfs');
+        const result = await listAgentFiles(ctx.agentId, path);
+        return formatFileTree(result, 0);
+      }
+      // Remote sandbox mode
+      const { listFiles } = await import('../models/agent');
       const result = await listFiles(path, ctx.agentUrl);
       return formatFileTree(result, 0);
     } catch (err) {
@@ -196,9 +217,16 @@ registry.register({
       additionalProperties: false,
     },
   },
-  async handler({ path = '' }, _ctx) {
-    const { loadFiles } = await import('../vfs/opfs');
+  async handler({ path = '' }, ctx) {
     try {
+      if (ctx?.agentId) {
+        // Agent workspace: list from agent's files dir
+        const { listAgentFiles } = await import('../vfs/opfs');
+        const result = await listAgentFiles(ctx.agentId, path);
+        return formatFileTree(result, 0);
+      }
+      // Fall back to global files dir
+      const { loadFiles } = await import('../vfs/opfs');
       const result = await loadFiles(path || undefined);
       return formatFileTree(result.children || result, 0);
     } catch (err) {
@@ -224,9 +252,16 @@ registry.register({
       additionalProperties: false,
     },
   },
-  async handler({ path }, _ctx) {
-    const { readFileContent } = await import('../vfs/opfs');
+  async handler({ path }, ctx) {
     try {
+      if (ctx?.agentId) {
+        // Agent workspace: read from agent's files dir
+        const { readAgentFile } = await import('../vfs/opfs');
+        const content = await readAgentFile(ctx.agentId, path);
+        return content ?? `File not found: ${path}`;
+      }
+      // Fall back to global files dir
+      const { readFileContent } = await import('../vfs/opfs');
       const parts = path.split('/');
       const fileName = parts.pop();
       const dirName = parts.length > 0 ? parts.join('/') : undefined;
@@ -263,16 +298,17 @@ registry.register({
       additionalProperties: false,
     },
   },
-  async handler({ content, type }, _ctx) {
+  async handler({ content, type }, ctx) {
     const { saveMemory, saveUser, MEMORY_MAX, USER_MAX } = await import(
       './memory.js'
     );
     try {
+      const agentId = ctx?.agentId;
       if (type === 'user') {
-        await saveUser(content);
+        await saveUser(content, agentId);
         return `Saved to USER.md (${content.length}/${USER_MAX} chars)`;
       }
-      await saveMemory(content);
+      await saveMemory(content, agentId);
       return `Saved to MEMORY.md (${content.length}/${MEMORY_MAX} chars)`;
     } catch (err) {
       return `Error saving memory: ${err.message}`;
@@ -298,9 +334,9 @@ registry.register({
       additionalProperties: false,
     },
   },
-  async handler({ type = 'both' }, _ctx) {
+  async handler({ type = 'both' }, ctx) {
     const { loadMemory } = await import('./memory.js');
-    const data = await loadMemory();
+    const data = await loadMemory(ctx?.agentId);
     if (type === 'memory') return data.memory || 'MEMORY.md is empty.';
     if (type === 'user') return data.user || 'USER.md is empty.';
     let out = '';
@@ -328,9 +364,9 @@ registry.register({
       additionalProperties: false,
     },
   },
-  async handler({ type = 'both' }, _ctx) {
+  async handler({ type = 'both' }, ctx) {
     const { clearMemory } = await import('./memory.js');
-    await clearMemory(type);
+    await clearMemory(type, ctx?.agentId);
     return `Cleared ${type === 'both' ? 'all memory' : type === 'memory' ? 'MEMORY.md' : 'USER.md'}.`;
   },
 });
@@ -346,10 +382,9 @@ registry.register({
       additionalProperties: false,
     },
   },
-  async handler(_args, _ctx) {
-    debugger
+  async handler(_args, ctx) {
     const { listSkills } = await import('./skills.js');
-    const skills = await listSkills();
+    const skills = await listSkills(ctx?.agentId);
     if (skills.length === 0)
       return 'No skills installed. Use the skill_manage tool to create one.';
     return skills
@@ -375,9 +410,9 @@ registry.register({
       additionalProperties: false,
     },
   },
-  async handler({ name }, _ctx) {
+  async handler({ name }, ctx) {
     const { getSkill } = await import('./skills.js');
-    const skill = await getSkill(name);
+    const skill = await getSkill(name, ctx?.agentId);
     if (!skill) return `Skill "${name}" not found.`;
     return skill.content;
   },
@@ -410,23 +445,24 @@ registry.register({
       additionalProperties: false,
     },
   },
-  async handler({ action, name, content }, _ctx) {
+  async handler({ action, name, content }, ctx) {
     const { createSkill, updateSkill, deleteSkill } = await import(
       './skills.js'
     );
     try {
+      const agentId = ctx?.agentId;
       if (action === 'create') {
         if (!content) return 'Error: content is required for create.';
-        await createSkill(name, content);
+        await createSkill(name, content, agentId);
         return `Skill "${name}" created.`;
       }
       if (action === 'update') {
         if (!content) return 'Error: content is required for update.';
-        await updateSkill(name, content);
+        await updateSkill(name, content, agentId);
         return `Skill "${name}" updated.`;
       }
       if (action === 'delete') {
-        await deleteSkill(name);
+        await deleteSkill(name, agentId);
         return `Skill "${name}" deleted.`;
       }
       return `Unknown action: ${action}`;

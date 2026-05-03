@@ -15,7 +15,7 @@
  *   await saveMemory('User prefers verbose explanations\n');
  */
 
-import { readMemoryFile, writeMemoryFile, deleteMemoryFile } from '../vfs/opfs';
+import { readMemoryFile, writeMemoryFile, deleteMemoryFile, readAgentMemoryFile, writeAgentMemoryFile, deleteAgentMemoryFile } from '../vfs/opfs';
 
 export const MEMORY_MAX = 2200;
 export const USER_MAX = 1375;
@@ -23,9 +23,17 @@ const DELIMITER = '§';
 
 /**
  * Load both memory files. Returns a frozen snapshot for session injection.
+ * @param {string} [agentId] — if provided, reads from agent workspace; otherwise global
  * @returns {Promise<{ memory: string|null, user: string|null }>}
  */
-export async function loadMemory() {
+export async function loadMemory(agentId) {
+  if (agentId) {
+    const [memory, user] = await Promise.all([
+      readAgentMemoryFile(agentId, 'MEMORY.md'),
+      readAgentMemoryFile(agentId, 'USER.md'),
+    ]);
+    return { memory, user };
+  }
   const [memory, user] = await Promise.all([
     readMemoryFile('MEMORY.md'),
     readMemoryFile('USER.md'),
@@ -37,33 +45,49 @@ export async function loadMemory() {
  * Append an entry to MEMORY.md. Enforces character limit.
  * When over limit, oldest entries are dropped from the front.
  * @param {string} content
+ * @param {string} [agentId] — if provided, writes to agent workspace; otherwise global
  */
-export async function saveMemory(content) {
-  const existing = await readMemoryFile('MEMORY.md');
-  const updated = appendEntry(existing, content, MEMORY_MAX);
-  await writeMemoryFile('MEMORY.md', updated);
+export async function saveMemory(content, agentId) {
+  if (agentId) {
+    const existing = await readAgentMemoryFile(agentId, 'MEMORY.md');
+    const updated = appendEntry(existing, content, MEMORY_MAX);
+    await writeAgentMemoryFile(agentId, 'MEMORY.md', updated);
+  } else {
+    const existing = await readMemoryFile('MEMORY.md');
+    const updated = appendEntry(existing, content, MEMORY_MAX);
+    await writeMemoryFile('MEMORY.md', updated);
+  }
 }
 
 /**
  * Append an entry to USER.md. Enforces character limit.
  * @param {string} content
+ * @param {string} [agentId] — if provided, writes to agent workspace; otherwise global
  */
-export async function saveUser(content) {
-  const existing = await readMemoryFile('USER.md');
-  const updated = appendEntry(existing, content, USER_MAX);
-  await writeMemoryFile('USER.md', updated);
+export async function saveUser(content, agentId) {
+  if (agentId) {
+    const existing = await readAgentMemoryFile(agentId, 'USER.md');
+    const updated = appendEntry(existing, content, USER_MAX);
+    await writeAgentMemoryFile(agentId, 'USER.md', updated);
+  } else {
+    const existing = await readMemoryFile('USER.md');
+    const updated = appendEntry(existing, content, USER_MAX);
+    await writeMemoryFile('USER.md', updated);
+  }
 }
 
 /**
  * Clear one or both memory files.
  * @param {string} type - 'memory', 'user', or 'both'
+ * @param {string} [agentId] — if provided, clears agent workspace; otherwise global
  */
-export async function clearMemory(type = 'both') {
+export async function clearMemory(type = 'both', agentId) {
+  const delFn = agentId ? deleteAgentMemoryFile : deleteMemoryFile;
   if (type === 'memory' || type === 'both') {
-    await deleteMemoryFile('MEMORY.md');
+    await delFn(agentId, 'MEMORY.md');
   }
   if (type === 'user' || type === 'both') {
-    await deleteMemoryFile('USER.md');
+    await delFn(agentId, 'USER.md');
   }
 }
 

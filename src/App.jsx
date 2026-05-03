@@ -8,6 +8,7 @@ import llm from './models/llm';
 import { executeCommand, initAgents, cleanupE2b, enableE2b, E2B_AGENT_ID, getSandboxStatus } from './models/agent';
 import { runAgentLoop } from './agent/loop';
 import { ensureDefaultSkills } from './agent/skills';
+import { ensureDefaultAgent, listAgents } from './agents/agents';
 import { I18nProvider } from './i18n/index';
 import { useI18n } from './i18n/context';
 import { WifiOff, ChevronRight } from './components/Icons/Icons';
@@ -54,6 +55,8 @@ function App() {
   const [fileManageWidth, setFileManageWidth] = useState(320);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [nickname, setNickname] = useState('');
+  const [agentList, setAgentList] = useState([]); // [{ id, name, createdAt }]
+  const [chatAgents, setChatAgents] = useState({}); // { chatId -> agentId }
   const savePending = useRef(null);
   const abortRef = useRef(null);
   const streamingContentRef = useRef('');  // accumulates chunks outside React state
@@ -100,6 +103,11 @@ function App() {
 
     // Ensure default skills exist in OPFS at startup
     ensureDefaultSkills().catch((err) => console.warn('Ensure default skills failed:', err));
+
+    // Ensure at least one agent workspace exists
+    ensureDefaultAgent().then(() => listAgents()).then((agents) => {
+      setAgentList(agents);
+    }).catch((err) => console.warn('Ensure default agent failed:', err));
   }, []);
 
   // Debounced save to OPFS whenever chats change
@@ -158,7 +166,12 @@ function App() {
     };
     setChats((prev) => [newChat, ...prev]);
     setActiveChatId(newChat.id);
-  }, [chats, activeChatId]);
+
+    // Auto-select the first available agent for this chat
+    if (agentList.length > 0) {
+      setChatAgents((prev) => ({ ...prev, [newChat.id]: agentList[0].id }));
+    }
+  }, [chats, activeChatId, agentList]);
 
   const handleSelectChat = useCallback((chatId) => {
     setActiveChatId(chatId);
@@ -167,7 +180,14 @@ function App() {
   const handleDeleteChat = useCallback(async (chatId) => {
     // First, delete the chat file from OPFS
     await deleteChatFile(chats, chatId);
-    
+
+    // Clean up agent assignment for this chat
+    setChatAgents((prev) => {
+      const next = { ...prev };
+      delete next[chatId];
+      return next;
+    });
+
     // Then update the React state
     setChats((prev) => {
       const updated = prev.filter((c) => c.id !== chatId);
@@ -180,7 +200,7 @@ function App() {
   }, [activeChatId, chats]);
 
   // Stream LLM response for a given chat using the agent loop
-  const streamResponse = useCallback(async (chatId, chatMessages) => {
+  const streamResponse = useCallback(async (chatId, chatMessages, opts = {}) => {
     // Prevent duplicate calls (StrictMode double-invoke guard)
     if (abortRef.current) return;
 
@@ -260,10 +280,13 @@ function App() {
     try {
       const activeConfig = llm.getActiveConfig();
 
+      const chatAgentId = opts.agentId ?? chatAgents[chatId] ?? null;
+
       const result = await runAgentLoop({
         messages: chatMessages,
         systemPrompt: selectedAgentRef.current ? AGENT_SYSTEM_PROMPT : '',
         agentUrl: selectedAgentRef.current,
+        agentId: chatAgentId,
         signal: controller.signal,
         provider: activeConfig.provider,
         model: activeConfig.model,
@@ -309,7 +332,7 @@ function App() {
       streamingThinkingRef.current = '';
       setStreaming(false);
     }
-  }, []);
+  }, [chatAgents]);
 
   const handleStopStreaming = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
@@ -331,8 +354,13 @@ function App() {
         };
         setChats((prev) => [newChat, ...prev]);
         setActiveChatId(newChat.id);
+        // Auto-select the first available agent for this chat
+        if (agentList.length > 0) {
+          setChatAgents((prev) => ({ ...prev, [newChat.id]: agentList[0].id }));
+        }
         // Schedule stream outside of state updater to avoid StrictMode double-fire
-        setTimeout(() => streamResponse(newChat.id, [userMsg]), 0);
+        const agentId = agentList.length > 0 ? agentList[0].id : null;
+        setTimeout(() => streamResponse(newChat.id, [userMsg], { agentId }), 0);
         return;
       }
 
@@ -359,7 +387,7 @@ function App() {
         return updated;
       });
     },
-    [activeChatId, streaming, streamResponse]
+    [activeChatId, streaming, streamResponse, agentList]
   );
 
   // Track online/offline status
@@ -400,6 +428,8 @@ function App() {
         onDeleteChat={handleDeleteChat}
         collapsed={leftPanelCollapsed}
         onToggleCollapse={() => setLeftPanelCollapsed(prev => !prev)}
+        chatAgents={chatAgents}
+        agentList={agentList}
       />
       {/* Expand button - visible when left panel is collapsed (PC mode only) */}
       {leftPanelCollapsed && (
@@ -414,6 +444,7 @@ function App() {
       )}
       <MessagePanel
         messages={messages}
+        activeChatId={activeChatId}
         onSendMessage={handleSendMessage}
         onRetry={() => {
           const chatId = activeChatId;
@@ -518,6 +549,14 @@ function App() {
         onNicknameChange={async (newNickname) => {
           setNickname(newNickname);
           await config.set('general.nickname', newNickname);
+        }}
+        agentList={agentList}
+        agentId={activeChatId ? chatAgents[activeChatId] || null : null}
+        onAgentChange={async (chatId, newAgentId) => {
+          setChatAgents((prev) => ({ ...prev, [chatId]: newAgentId }));
+        }}
+        onAgentListChange={async (newList) => {
+          setAgentList(newList);
         }}
       />
       <FileManage

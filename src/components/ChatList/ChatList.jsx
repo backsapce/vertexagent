@@ -6,7 +6,7 @@ import './ChatList.css';
 // Breakpoint for mobile/tablet
 const MOBILE_BREAKPOINT = 768;
 
-const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, collapsed = false, onToggleCollapse }) => {
+const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, collapsed = false, onToggleCollapse, chatAgents = {}, agentList = [] }) => {
   const { t } = useI18n();
   const [width, setWidth] = useState(280);
   const [isResizing, setIsResizing] = useState(false);
@@ -126,7 +126,17 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, 
                 onClick={() => handleSelectChat(chat.id)}
               >
                 <div className="chat-item-row">
-                  <div className="chat-item-title">{chat.title}</div>
+                  <div className="chat-item-title">
+                    {chat.title}
+                    {chatAgents[chat.id] && (
+                      <span className="chat-agent-badge">
+                        {(() => {
+                          const agent = agentList.find((a) => a.id === chatAgents[chat.id]);
+                          return agent ? agent.name : chatAgents[chat.id];
+                        })()}
+                      </span>
+                    )}
+                  </div>
                   <button
                     className="chat-item-delete"
                     title={t('chat.deleteChat')}

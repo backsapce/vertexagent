@@ -44,6 +44,7 @@
         "appearance": "Appearance",
         "data": "Data",
         "language": "Language",
+        "agents": "Agents",
         "skills": "Skills",
         "cancel": "Cancel",
         "save": "Save"
@@ -153,6 +154,15 @@
         "disabled": "Disabled",
         "enableAll": "Enable All",
         "disableAll": "Disable All"
+    },
+    "agentSettings": {
+        "title": "Agents",
+        "desc": "Manage agents. Each agent has its own isolated workspace with separate memory and files. Global skills are shared across all agents.",
+        "empty": "No agents. A default agent is created automatically on first startup.",
+        "addAgent": "Add Agent",
+        "removeAgent": "Remove agent",
+        "created": "Created",
+        "rename": "Click name to rename"
     },
     "errors": {
         "noLLMConfigured": "Please configure an LLM provider in Settings.",

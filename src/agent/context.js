@@ -37,6 +37,7 @@ const TOKENS_PER_CHAR = 4; // rough char-to-token ratio
  * @param {string} opts.systemPrompt - Base system prompt (core instructions)
  * @param {{ memory: string|null, user: string|null }} [opts.memorySnapshot]
  * @param {string} [opts.skillsList] - Pre-built skills section
+ * @param {string} [opts.agentIdentity] - AGENTS.md content for agent identity
  * @param {number} [opts.contextWindow] - Model context window size
  * @param {boolean} [opts.forceCompress] - Force compression regardless of token count
  * @returns {Promise<{ messages: Array, systemPrompt: string, compressed: boolean }>}
@@ -47,12 +48,14 @@ export async function buildContext(opts) {
     systemPrompt = '',
     memorySnapshot,
     skillsList = '',
+    agentIdentity = null,
     contextWindow = CONTEXT_WINDOW_FALLBACK,
     forceCompress = false,
   } = opts;
 
   // Build full system prompt
   let fullSystemPrompt = systemPrompt;
+  if (agentIdentity) fullSystemPrompt += '\n\n' + buildAgentIdentitySection(agentIdentity);
   if (memorySnapshot) {
     const memorySection = buildMemorySection(memorySnapshot);
     if (memorySection) fullSystemPrompt += '\n\n' + memorySection;
@@ -151,6 +154,7 @@ export async function summarizeMiddle(middleMessages, existingSummary) {
  * @param {string} [opts.summary] - Pre-computed summary of dropped messages
  * @param {{ memory: string|null, user: string|null }} [opts.memorySnapshot]
  * @param {string} [opts.skillsList]
+ * @param {string} [opts.agentIdentity] - AGENTS.md content for agent identity
  * @param {number} [opts.contextWindow]
  * @returns {Promise<{ apiMessages: Array, systemPrompt: string }>}
  */
@@ -161,11 +165,13 @@ export async function assembleApiMessages(opts) {
     summary,
     memorySnapshot,
     skillsList,
+    agentIdentity = null,
     contextWindow,
   } = opts;
 
   // Build full system prompt
   let fullSystemPrompt = systemPrompt;
+  if (agentIdentity) fullSystemPrompt += '\n\n' + buildAgentIdentitySection(agentIdentity);
   if (memorySnapshot) {
     const memorySection = buildMemorySection(memorySnapshot);
     if (memorySection) fullSystemPrompt += '\n\n' + memorySection;
@@ -237,4 +243,9 @@ function buildMemorySection(snapshot) {
     out += `<user_profile>\n${snapshot.user}\n</user_profile>\n\n`;
   }
   return out;
+}
+
+/** Build the agent identity section from AGENTS.md content. */
+function buildAgentIdentitySection(content) {
+  return `<agent_identity>\n${content.trim()}\n</agent_identity>`;
 }

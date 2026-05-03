@@ -24,6 +24,10 @@ import {
   deleteSkillDir,
   listSkillRefs,
   readSkillRef,
+  listAgentSkillDirs,
+  readAgentSkillFile,
+  writeAgentSkillFile,
+  deleteAgentSkillDir,
 } from '../vfs/opfs';
 import config from '../config/config';
 
@@ -132,10 +136,27 @@ export async function ensureDefaultSkills() {
 
 /**
  * List all available skills with their metadata.
+ * @param {string} [agentId] — if provided, combines global + agent skills
  * @returns {Promise<Array<{ name: string, description: string, version: string }>>}
  */
-export async function listSkills() {
+export async function listSkills(agentId) {
   await ensureDefaultSkills();
+  const skills = await listSkillsFromGlobal();
+
+  if (agentId) {
+    const agentSkills = await listSkillsFromAgent(agentId);
+    // Agent skills with the same name override global skills
+    const globalNames = new Set(skills.map((s) => s.name));
+    for (const as of agentSkills) {
+      if (!globalNames.has(as.name)) {
+        skills.push(as);
+      }
+    }
+  }
+  return skills;
+}
+
+async function listSkillsFromGlobal() {
   const dirs = await listSkillDirs();
   const skills = [];
   for (const dir of dirs) {
@@ -151,12 +172,39 @@ export async function listSkills() {
   return skills;
 }
 
+async function listSkillsFromAgent(agentId) {
+  const dirs = await listAgentSkillDirs(agentId);
+  const skills = [];
+  for (const dir of dirs) {
+    const content = await readAgentSkillFile(agentId, dir.name, 'SKILL.md');
+    if (!content) continue;
+    const { name, description, version } = parseFrontmatter(content);
+    skills.push({
+      name: name || dir.name,
+      description: description || 'No description provided',
+      version: version || '1.0.0',
+    });
+  }
+  return skills;
+}
+
 /**
  * Load the full skill content including references if available.
+ * Checks agent-specific skills first, then falls back to global.
  * @param {string} name - Skill name (exact match)
+ * @param {string} [agentId] — if provided, checks agent skills first
  * @returns {Promise<{ name: string, content: string, refs?: Array<{name, content}> }|null>}
  */
-export async function getSkill(name) {
+export async function getSkill(name, agentId) {
+  // Check agent-specific skills first
+  if (agentId) {
+    const agentContent = await readAgentSkillFile(agentId, name, 'SKILL.md');
+    if (agentContent) {
+      return { name, content: agentContent };
+    }
+  }
+
+  // Fall back to global skills
   const content = await readSkillFile(name, 'SKILL.md');
   if (!content) return null;
 
@@ -182,27 +230,42 @@ export async function getSkill(name) {
  * Create a new skill.
  * @param {string} name - Skill identifier (no spaces)
  * @param {string} content - Full SKILL.md content with YAML frontmatter
+ * @param {string} [agentId] — if provided, creates in agent workspace
  */
-export async function createSkill(name, content) {
+export async function createSkill(name, content, agentId) {
   const sanitized = name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
-  await writeSkillFile(sanitized, 'SKILL.md', content);
+  if (agentId) {
+    await writeAgentSkillFile(agentId, sanitized, 'SKILL.md', content);
+  } else {
+    await writeSkillFile(sanitized, 'SKILL.md', content);
+  }
 }
 
 /**
  * Update an existing skill's content.
  * @param {string} name
  * @param {string} content
+ * @param {string} [agentId] — if provided, updates agent skill
  */
-export async function updateSkill(name, content) {
-  await writeSkillFile(name, 'SKILL.md', content);
+export async function updateSkill(name, content, agentId) {
+  if (agentId) {
+    await writeAgentSkillFile(agentId, name, 'SKILL.md', content);
+  } else {
+    await writeSkillFile(name, 'SKILL.md', content);
+  }
 }
 
 /**
  * Delete a skill.
  * @param {string} name
+ * @param {string} [agentId] — if provided, deletes from agent workspace
  */
-export async function deleteSkill(name) {
-  await deleteSkillDir(name);
+export async function deleteSkill(name, agentId) {
+  if (agentId) {
+    await deleteAgentSkillDir(agentId, name);
+  } else {
+    await deleteSkillDir(name);
+  }
 }
 
 /**
@@ -243,49 +306,35 @@ export async function isSkillEnabled(name) {
 /**
  * List all available skills with their metadata and enabled state.
  * @param {boolean} [includeDisabled=true] - Whether to include disabled skills
+ * @param {string} [agentId] — if provided, combines global + agent skills
  * @returns {Promise<Array<{ name: string, description: string, version: string, enabled: boolean }>>}
  */
-export async function listAllSkills(includeDisabled = true) {
-  await ensureDefaultSkills();
-  const dirs = await listSkillDirs();
-  const skills = [];
+export async function listAllSkills(includeDisabled = true, agentId) {
+  const skills = await listSkills(agentId);
   const disabledSet = includeDisabled ? await getDisabledSkills() : new Set();
-  
-  for (const dir of dirs) {
-    const content = await readSkillFile(dir.name, 'SKILL.md');
-    if (!content) continue;
-    const { name, description, version } = parseFrontmatter(content);
-    const skillName = name || dir.name;
-    skills.push({
-      name: skillName,
-      description: description || 'No description provided',
-      version: version || '1.0.0',
-      enabled: !disabledSet.has(skillName),
-    });
-  }
-  return skills;
+  return skills.map((s) => ({
+    ...s,
+    enabled: !disabledSet.has(s.name),
+  }));
 }
 
 /**
  * Build the available skills section for the system prompt.
- * Only includes enabled skills.
+ * Only includes enabled skills. Combines global and agent skills.
+ * @param {string} [agentId] — if provided, combines global + agent skills
  * @returns {Promise<string>}
  */
-export async function buildSkillsSection() {
+export async function buildSkillsSection(agentId) {
   await ensureDefaultSkills();
   const disabledSet = await getDisabledSkills();
-  const dirs = await listSkillDirs();
+  const allSkills = await listSkills(agentId);
   const skills = [];
-  
-  for (const dir of dirs) {
-    const content = await readSkillFile(dir.name, 'SKILL.md');
-    if (!content) continue;
-    const { name, description } = parseFrontmatter(content);
-    const skillName = name || dir.name;
-    if (disabledSet.has(skillName)) continue;
-    skills.push({ name: skillName, description: description || 'No description provided' });
+
+  for (const s of allSkills) {
+    if (disabledSet.has(s.name)) continue;
+    skills.push({ name: s.name, description: s.description });
   }
-  
+
   if (skills.length === 0) return '';
   const list = skills.map((s) => `- ${s.name}: ${s.description}`).join('\n');
   return `<available_skills>\n${list}\n</available_skills>\n\n`;
