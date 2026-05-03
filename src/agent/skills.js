@@ -27,13 +27,115 @@ import {
 } from '../vfs/opfs';
 import config from '../config/config';
 
+// ─── Default Skills ───────────────────────────────────────────────────────────
+
+const DEFAULT_SKILLS = [
+  {
+    name: 'skill-creator',
+    content: `---
+name: skill-creator
+description: Guide for creating new skills. Use this when the user wants to add a new skill or asks how to create one.
+version: 1.0.0
+---
+
+# Skill Creator
+
+This skill guides you through creating a new skill for this agent system.
+
+## What is a Skill
+
+A skill is a directory under the OPFS \`skills/\` folder containing a \`SKILL.md\` file with YAML frontmatter. Skills provide) are progressively disclosed to the LLM — only name and description appear in the system prompt until the LLM requests the full content.
+
+## Skill Structure
+
+Each skill lives in its own directory:
+
+\`\`\`
+skills/
+  my-skill/
+    SKILL.md          # Required — frontmatter + instructions
+    references/       # Optional — supplementary files
+      example.md
+      template.txt
+\`\`\`
+
+## SKILL.md Format
+
+\`\`\`markdown
+---
+name: my-skill
+description: A brief description of what this skill does and when to use it.
+version: 1.0.0
+---
+
+# My Skill
+
+Detailed instructions for the LLM on how to use this skill.
+Be specific about:
+- When to activate this skill
+- What steps to follow
+- What output format to produce
+- Any constraints or edge cases
+\`\`\`
+
+### Frontmatter fields
+
+- **name** (required): Unique identifier, lowercase, hyphens, no spaces.
+- **description** (required): Short summary shown in the system prompt. Write it so the LLM knows *when* to load this skill.
+- **version** (required): Semantic version string.
+
+## Creating a Skill
+
+When the user wants to create a skill, follow these steps:
+
+1. **Determine the skill name** — lowercase, hyphens allowed, e.g. \`code-reviewer\`, \`data-analyst\`.
+2. **Write the frontmatter** — name, description, version.
+3. **Write the SKILL.md body** — clear instructions for the LLM, including triggers, steps, and output format.
+4. **Optionally add reference files** — place them in \`references/\` within the skill directory.
+5. **Call the \`create_skill\` tool** with the name and full content.
+
+## Reference Files
+
+Use the \`references/\` subdirectory for:
+- Templates the LLM should fill in
+- Detailed API docs or schema definitions
+- Large configuration examples
+- Any content too verbose to include in SKILL.md itself
+
+Reference files are only loaded when the LLM explicitly views the skill. Keep SKILL.md concise.
+
+## Best Practices
+
+- **Be specific in the description** — this is the only thing the LLM sees before deciding whether to load the skill. Include trigger phrases like "when the user asks about X" or "for Y workflows".
+- **Write SKILL.md as instructions to the LLM**, not as user-facing documentation.
+- **Keep SKILL.md under ~200 lines** — move details to reference files.
+- **Test the skill** by creating it and verifying it appears in the system prompt.
+`,
+  },
+];
+
 // ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Ensure all default skills exist in OPFS, creating any that are missing.
+ */
+async function ensureDefaultSkills() {
+  debugger
+  const existing = await listSkillDirs();
+  const existingNames = new Set(existing.map((d) => d.name));
+  for (const def of DEFAULT_SKILLS) {
+    if (!existingNames.has(def.name)) {
+      await writeSkillFile(def.name, 'SKILL.md', def.content);
+    }
+  }
+}
 
 /**
  * List all available skills with their metadata.
  * @returns {Promise<Array<{ name: string, description: string, version: string }>>}
  */
 export async function listSkills() {
+  await ensureDefaultSkills();
   const dirs = await listSkillDirs();
   const skills = [];
   for (const dir of dirs) {
@@ -144,6 +246,7 @@ export async function isSkillEnabled(name) {
  * @returns {Promise<Array<{ name: string, description: string, version: string, enabled: boolean }>>}
  */
 export async function listAllSkills(includeDisabled = true) {
+  await ensureDefaultSkills();
   const dirs = await listSkillDirs();
   const skills = [];
   const disabledSet = includeDisabled ? await getDisabledSkills() : new Set();
@@ -169,6 +272,7 @@ export async function listAllSkills(includeDisabled = true) {
  * @returns {Promise<string>}
  */
 export async function buildSkillsSection() {
+  await ensureDefaultSkills();
   const disabledSet = await getDisabledSkills();
   const dirs = await listSkillDirs();
   const skills = [];
