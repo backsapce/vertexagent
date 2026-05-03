@@ -30,8 +30,8 @@
         "stop": "停止",
         "send": "发送",
         "inputHint": "Enter 发送，{modifier}+Enter 换行",
-        "agent": "代理",
-        "noAgentSelected": "未选择代理",
+        "sandbox": "沙箱",
+        "noSandboxSelected": "未选择沙箱",
         "noProviderConfigured": "未配置服务商",
         "uploaded": "已上传"
     },
@@ -39,7 +39,7 @@
         "title": "设置",
         "llm": "LLM 设置",
         "general": "通用",
-        "agents": "代理",
+        "sandboxes": "沙箱",
         "e2b": "E2B 云端",
         "appearance": "外观",
         "data": "数据",
@@ -76,23 +76,23 @@
         "baseUrlHint": "留空使用默认端点。",
         "baseUrlRequiredHint": "输入 OpenAI 兼容 API 端点的基础 URL（例如 http://localhost:11434/v1）。"
     },
-    "agentSettings": {
-        "title": "代理服务器",
-        "desc": "管理用于工具执行的代理服务器。已连接的代理可以在远程或本地机器上运行 Shell 命令。",
-        "empty": "未配置代理。在下方添加一个或启动本地代理服务器。",
-        "removeAgent": "移除代理",
+    "sandboxSettings": {
+        "title": "沙箱主机",
+        "desc": "管理用于工具执行的沙箱主机。已连接的沙箱可以在远程或本地机器上运行 Shell 命令。",
+        "empty": "未配置沙箱。在下方添加一个或启动本地沙箱服务器。",
+        "removeSandbox": "移除沙箱",
         "authenticate": "认证",
         "enterToken": "输入服务器控制台中的令牌",
         "submit": "提交",
         "cancel": "取消",
-        "addAgent": "添加代理",
+        "addSandbox": "添加沙箱",
         "hostPlaceholder": "http://hostname:3099",
         "checking": "检查中...",
         "connect": "连接",
-        "hint": "输入代理服务器的主机 URL。服务器会在控制台打印连接令牌用于认证。",
-        "alreadyAdded": "该代理已添加。",
-        "connectFailed": "无法连接。请确保代理服务器正在运行。",
-        "modeServer": "Vertex 服务器",
+        "hint": "输入沙箱服务器的主机 URL。服务器会在控制台打印连接令牌用于认证。",
+        "alreadyAdded": "该沙箱已添加。",
+        "connectFailed": "无法连接。请确保沙箱服务器正在运行。",
+        "modeServer": "Vertex 沙箱",
         "modeE2b": "E2B 云端",
         "e2bNotStarted": "沙箱未启动"
     },
@@ -161,8 +161,8 @@
         "apiKeyNotSet": "未设置 {provider} 的 API 密钥。请在设置中添加。",
         "unknownProvider": "未知服务商：{provider}",
         "serverNoToken": "服务器未返回令牌。",
-        "agentReturned": "代理返回 {status}",
-        "agentRequestFailed": "代理请求失败"
+        "sandboxReturned": "沙箱返回 {status}",
+        "sandboxRequestFailed": "沙箱请求失败"
     },
     "offline": {
         "banner": "离线模式 \u2014 使用缓存运行"

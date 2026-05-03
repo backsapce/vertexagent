@@ -118,9 +118,9 @@ Reference files are only loaded when the LLM explicitly views the skill. Keep SK
 
 /**
  * Ensure all default skills exist in OPFS, creating any that are missing.
+ * Safe to call multiple times — only creates missing skills.
  */
-async function ensureDefaultSkills() {
-  debugger
+export async function ensureDefaultSkills() {
   const existing = await listSkillDirs();
   const existingNames = new Set(existing.map((d) => d.name));
   for (const def of DEFAULT_SKILLS) {

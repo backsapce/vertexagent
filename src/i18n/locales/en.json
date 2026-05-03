@@ -30,8 +30,8 @@
         "stop": "Stop",
         "send": "Send",
         "inputHint": "Enter to send, {modifier}+Enter for new line",
-        "agent": "Agent",
-        "noAgentSelected": "No agent selected",
+        "sandbox": "Sandbox",
+        "noSandboxSelected": "No sandbox selected",
         "noProviderConfigured": "No provider configured",
         "uploaded": "uploaded"
     },
@@ -39,7 +39,7 @@
         "title": "Settings",
         "llm": "LLM Settings",
         "general": "General",
-        "agents": "Agents",
+        "sandboxes": "Sandboxes",
         "e2b": "E2B Cloud",
         "appearance": "Appearance",
         "data": "Data",
@@ -76,23 +76,23 @@
         "baseUrlHint": "Leave empty to use the default endpoint.",
         "baseUrlRequiredHint": "Enter the base URL of your OpenAI-compatible API endpoint (e.g. http://localhost:11434/v1)."
     },
-    "agentSettings": {
-        "title": "Agent Hosts",
-        "desc": "Manage agent servers for tool execution. Connected agents can run shell commands on remote or local machines.",
-        "empty": "No agents configured. Add one below or start a local agent server.",
-        "removeAgent": "Remove agent",
+    "sandboxSettings": {
+        "title": "Sandbox Hosts",
+        "desc": "Manage sandbox hosts for tool execution. Connected sandboxes can run shell commands on remote or local machines.",
+        "empty": "No sandboxes configured. Add one below or start a local sandbox server.",
+        "removeSandbox": "Remove sandbox",
         "authenticate": "Authenticate",
         "enterToken": "Enter token from server console",
         "submit": "Submit",
         "cancel": "Cancel",
-        "addAgent": "Add Agent",
+        "addSandbox": "Add Sandbox",
         "hostPlaceholder": "http://hostname:3099",
         "checking": "Checking...",
         "connect": "Connect",
-        "hint": "Enter the host URL of an agent server. The server will print a connect token to its console for authentication.",
-        "alreadyAdded": "This agent is already added.",
-        "connectFailed": "Could not connect. Make sure the agent server is running.",
-        "modeServer": "Vertex Server",
+        "hint": "Enter the host URL of a sandbox server. The server will print a connect token to its console for authentication.",
+        "alreadyAdded": "This sandbox is already added.",
+        "connectFailed": "Could not connect. Make sure the sandbox server is running.",
+        "modeServer": "Vertex Sandbox",
         "modeE2b": "E2B Cloud",
         "e2bNotStarted": "sandbox not started"
     },
@@ -161,8 +161,8 @@
         "apiKeyNotSet": "API key not set for {provider}. Please add your key in Settings.",
         "unknownProvider": "Unknown provider: {provider}",
         "serverNoToken": "Server did not return a token.",
-        "agentReturned": "Agent returned {status}",
-        "agentRequestFailed": "Agent request failed"
+        "sandboxReturned": "Sandbox returned {status}",
+        "sandboxRequestFailed": "Sandbox request failed"
     },
     "offline": {
         "banner": "Offline \u2014 running from cache"

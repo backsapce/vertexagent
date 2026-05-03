@@ -75,7 +75,7 @@
   border: 1px solid var(--color-border);
 }
 
-.agent-badge {
+.sandbox-badge {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -90,7 +90,7 @@
   cursor: default;
 }
 
-.agent-badge-tooltip {
+.sandbox-badge-tooltip {
   position: absolute;
   bottom: calc(100% + 6px);
   right: 0;
@@ -110,18 +110,18 @@
   z-index: 10;
 }
 
-.agent-badge:hover .agent-badge-tooltip {
+.sandbox-badge:hover .sandbox-badge-tooltip {
   opacity: 1;
   transform: translateY(0);
 }
 
-.agent-badge.e2b {
+.sandbox-badge.e2b {
   color: #8b5cf6;
   background: rgba(139, 92, 246, 0.1);
   border-color: rgba(139, 92, 246, 0.25);
 }
 
-.agent-badge.e2b .agent-select-inline {
+.sandbox-badge.e2b .sandbox-select-inline {
   color: #8b5cf6;
   background: rgba(139, 92, 246, 0.05);
 }
@@ -813,8 +813,8 @@
   transform: translateY(0);
 }
 
-/* Agent inline selector in input hint area */
-.agent-select-inline {
+/* Sandbox inline selector in input hint area */
+.sandbox-select-inline {
   background: transparent;
   border: none;
   color: inherit;
@@ -831,7 +831,7 @@
   text-overflow: ellipsis;
 }
 
-.agent-select-inline option {
+.sandbox-select-inline option {
   background: var(--color-surface-modal);
   color: var(--color-text);
 }

@@ -30,8 +30,8 @@
         "stop": "停止",
         "send": "送信",
         "inputHint": "Enter で送信、{modifier}+Enter で改行",
-        "agent": "エージェント",
-        "noAgentSelected": "エージェント未選択",
+        "sandbox": "サンドボックス",
+        "noSandboxSelected": "サンドボックス未選択",
         "noProviderConfigured": "プロバイダー未設定",
         "uploaded": "アップロード済み"
     },
@@ -39,7 +39,7 @@
         "title": "設定",
         "llm": "LLM 設定",
         "general": "一般",
-        "agents": "エージェント",
+        "sandboxes": "サンドボックス",
         "e2b": "E2B クラウド",
         "appearance": "外観",
         "data": "データ",
@@ -76,23 +76,23 @@
         "baseUrlHint": "デフォルトのエンドポイントを使用する場合は空欄のままにしてください。",
         "baseUrlRequiredHint": "OpenAI 互換 API エンドポイントのベース URL を入力してください（例: http://localhost:11434/v1）。"
     },
-    "agentSettings": {
-        "title": "エージェントホスト",
-        "desc": "ツール実行用のエージェントサーバーを管理します。接続されたエージェントはリモートまたはローカルマシンでシェルコマンドを実行できます。",
-        "empty": "エージェントが設定されていません。下に追加するか、ローカルエージェントサーバーを起動してください。",
-        "removeAgent": "エージェントを削除",
+    "sandboxSettings": {
+        "title": "サンドボックスホスト",
+        "desc": "ツール実行用のサンドボックスホストを管理します。接続されたサンドボックスはリモートまたはローカルマシンでシェルコマンドを実行できます。",
+        "empty": "サンドボックスが設定されていません。下に追加するか、ローカルのサンドボックスサーバーを起動してください。",
+        "removeSandbox": "サンドボックスを削除",
         "authenticate": "認証",
         "enterToken": "サーバーコンソールのトークンを入力",
         "submit": "送信",
         "cancel": "キャンセル",
-        "addAgent": "エージェントを追加",
+        "addSandbox": "サンドボックスを追加",
         "hostPlaceholder": "http://hostname:3099",
         "checking": "確認中...",
         "connect": "接続",
-        "hint": "エージェントサーバーのホスト URL を入力してください。サーバーは認証用の接続トークンをコンソールに表示します。",
-        "alreadyAdded": "このエージェントは既に追加されています。",
-        "connectFailed": "接続できません。エージェントサーバーが実行中であることを確認してください。",
-        "modeServer": "Vertex サーバー",
+        "hint": "サンドボックスサーバーホスト URL を入力してください。サーバーは認証用の接続トークンをコンソールに表示します。",
+        "alreadyAdded": "このサンドボックスは既に追加されています。",
+        "connectFailed": "接続できません。サンドボックスサーバーが実行中であることを確認してください。",
+        "modeServer": "Vertex サンドボックス",
         "modeE2b": "E2B クラウド",
         "e2bNotStarted": "サンドボックス未起動"
     },
@@ -161,8 +161,8 @@
         "apiKeyNotSet": "{provider} の API キーが設定されていません。設定でキーを追加してください。",
         "unknownProvider": "不明なプロバイダー: {provider}",
         "serverNoToken": "サーバーがトークンを返しませんでした。",
-        "agentReturned": "エージェントが {status} を返しました",
-        "agentRequestFailed": "エージェントリクエストが失敗しました"
+        "sandboxReturned": "サンドボックスが {status} を返しました",
+        "sandboxRequestFailed": "サンドボックスリクエストが失敗しました"
     },
     "offline": {
         "banner": "オフライン \u2014 キャッシュで実行中"

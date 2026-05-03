@@ -7,6 +7,7 @@ import config from './config/config';
 import llm from './models/llm';
 import { executeCommand, initAgents, cleanupE2b, enableE2b, E2B_AGENT_ID, getSandboxStatus } from './models/agent';
 import { runAgentLoop } from './agent/loop';
+import { ensureDefaultSkills } from './agent/skills';
 import { I18nProvider } from './i18n/index';
 import { useI18n } from './i18n/context';
 import { WifiOff, ChevronRight } from './components/Icons/Icons';
@@ -96,6 +97,9 @@ function App() {
       setSelectedAgentUrl(selectedUrl);
       selectedAgentRef.current = selectedUrl;
     }).catch((err) => console.warn('Agent init failed:', err));
+
+    // Ensure default skills exist in OPFS at startup
+    ensureDefaultSkills().catch((err) => console.warn('Ensure default skills failed:', err));
   }, []);
 
   // Debounced save to OPFS whenever chats change

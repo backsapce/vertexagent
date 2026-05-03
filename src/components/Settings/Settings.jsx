@@ -155,7 +155,7 @@ const Settings = ({
     const url = newAgentUrl.trim().replace(/\/+$/, '');
     if (!url) return;
     if (agents.some((a) => a.url === url)) {
-      setNewAgentError(t('agentSettings.alreadyAdded'));
+      setNewAgentError(t('sandboxSettings.alreadyAdded'));
       return;
     }
     setNewAgentChecking(true);
@@ -163,7 +163,7 @@ const Settings = ({
     try {
       const info = await checkAgentAvailable(url);
       if (!info.available) {
-        setNewAgentError(t('agentSettings.connectFailed'));
+        setNewAgentError(t('sandboxSettings.connectFailed'));
         return;
       }
       let name;
@@ -288,11 +288,11 @@ const Settings = ({
               {t('settings.general')}
             </button>
             <button
-              className={`settings-nav-item ${settingsTab === 'agents' ? 'active' : ''}`}
-              onClick={() => setSettingsTab('agents')}
+              className={`settings-nav-item ${settingsTab === 'sandboxes' ? 'active' : ''}`}
+              onClick={() => setSettingsTab('sandboxes')}
             >
               <Plug width={16} height={16} />
-              {t('settings.agents')}
+              {t('settings.sandboxes')}
               {agents.filter((a) => a.status === 'connected').length > 0 && (
                 <span className="settings-nav-count">{agents.filter((a) => a.status === 'connected').length}</span>
               )}
@@ -481,63 +481,63 @@ const Settings = ({
               </div>
             </div>
           )}
-          {settingsTab === 'agents' && (
+          {settingsTab === 'sandboxes' && (
             <div className="settings-section">
-              <h3>{t('agentSettings.title')}</h3>
-              <p className="settings-desc">{t('agentSettings.desc')}</p>
+              <h3>{t('sandboxSettings.title')}</h3>
+              <p className="settings-desc">{t('sandboxSettings.desc')}</p>
 
-              <div className="agents-list">
+              <div className="sandboxes-list">
                 {agents.length === 0 && (
-                  <div className="agents-empty">{t('agentSettings.empty')}</div>
+                  <div className="sandboxes-empty">{t('sandboxSettings.empty')}</div>
                 )}
                 {agents.map((agent) => (
-                  <div key={agent.url} className={`agent-item ${agent.status}${agent.isE2b ? ' e2b' : ''}`}>
-                    <div className="agent-item-info">
-                      <span className={`agent-status-dot ${agent.status}${agent.isE2b ? ' e2b' : ''}`} />
-                      <div className="agent-item-details">
-                        <span className="agent-item-name">{agent.name}</span>
-                        <span className="agent-item-url">{agent.isE2b ? (agent.sandboxId || t('agentSettings.e2bNotStarted')) : agent.url}</span>
+                  <div key={agent.url} className={`sandbox-item ${agent.status}${agent.isE2b ? ' e2b' : ''}`}>
+                    <div className="sandbox-item-info">
+                      <span className={`sandbox-status-dot ${agent.status}${agent.isE2b ? ' e2b' : ''}`} />
+                      <div className="sandbox-item-details">
+                        <span className="sandbox-item-name">{agent.name}</span>
+                        <span className="sandbox-item-url">{agent.isE2b ? (agent.sandboxId || t('sandboxSettings.e2bNotStarted')) : agent.url}</span>
                       </div>
                     </div>
                     {agent.isE2b && agent.status === 'connected' && (
                       <button
-                        className="agent-remove-btn"
+                        className="sandbox-remove-btn"
                         onClick={async () => {
                           // Disable E2B: clear key and cleanup
                           await onE2bChange('');
                         }}
-                        title={t('agentSettings.removeAgent')}
+                        title={t('sandboxSettings.removeSandbox')}
                       >
                         <X width={14} height={14} />
                       </button>
                     )}
                     {!agent.isE2b && (
-                      <button className="agent-remove-btn" onClick={() => handleRemoveAgent(agent.url)} title={t('agentSettings.removeAgent')}>
+                      <button className="sandbox-remove-btn" onClick={() => handleRemoveAgent(agent.url)} title={t('sandboxSettings.removeSandbox')}>
                         <X width={14} height={14} />
                       </button>
                     )}
                     {agent.status === 'needsAuth' && connectingAgent !== agent.url && (
                       <button
-                        className="agent-connect-btn"
+                        className="sandbox-connect-btn"
                         onClick={() => { setConnectingAgent(agent.url); setConnectTokenInput(''); setConnectError(null); }}
                       >
-                        {t('agentSettings.authenticate')}
+                        {t('sandboxSettings.authenticate')}
                       </button>
                     )}
                     {connectingAgent === agent.url && (
-                      <div className="agent-token-row">
+                      <div className="sandbox-token-row">
                         <input
                           type="text"
-                          placeholder={t('agentSettings.enterToken')}
+                          placeholder={t('sandboxSettings.enterToken')}
                           value={connectTokenInput}
                           onChange={(e) => { setConnectTokenInput(e.target.value); setConnectError(null); }}
                           onKeyDown={(e) => { if (e.key === 'Enter') handleConnectWithToken(agent.url); }}
                           autoFocus
                         />
                         <button onClick={() => handleConnectWithToken(agent.url)} disabled={!connectTokenInput.trim()}>
-                          {t('agentSettings.submit')}
+                          {t('sandboxSettings.submit')}
                         </button>
-                        <button className="agent-token-cancel" onClick={() => setConnectingAgent(null)}>{t('agentSettings.cancel')}</button>
+                        <button className="sandbox-token-cancel" onClick={() => setConnectingAgent(null)}>{t('sandboxSettings.cancel')}</button>
                         {connectError && <p className="settings-error">{connectError}</p>}
                       </div>
                     )}
@@ -545,44 +545,44 @@ const Settings = ({
                 ))}
               </div>
 
-              <label>{t('agentSettings.addAgent')}</label>
-              <div className="agent-mode-selector">
+              <label>{t('sandboxSettings.addSandbox')}</label>
+              <div className="sandbox-mode-selector">
                 <button
-                  className={`agent-mode-btn ${agentAddMode === 'server' ? 'active' : ''}`}
+                  className={`sandbox-mode-btn ${agentAddMode === 'server' ? 'active' : ''}`}
                   onClick={() => setAgentAddMode('server')}
                 >
                   <Plug width={14} height={14} />
-                  {t('agentSettings.modeServer')}
+                  {t('sandboxSettings.modeServer')}
                 </button>
                 <button
-                  className={`agent-mode-btn ${agentAddMode === 'e2b' ? 'active' : ''}`}
+                  className={`sandbox-mode-btn ${agentAddMode === 'e2b' ? 'active' : ''}`}
                   onClick={() => setAgentAddMode('e2b')}
                 >
                   <Cloud width={14} height={14} />
-                  {t('agentSettings.modeE2b')}
+                  {t('sandboxSettings.modeE2b')}
                 </button>
               </div>
 
               {agentAddMode === 'server' && (
                 <>
-                  <div className="agent-add-row">
+                  <div className="sandbox-add-row">
                     <input
                       type="text"
-                      placeholder={t('agentSettings.hostPlaceholder')}
+                      placeholder={t('sandboxSettings.hostPlaceholder')}
                       value={newAgentUrl}
                       onChange={(e) => { setNewAgentUrl(e.target.value); setNewAgentError(null); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleAddAgent(); }}
                     />
                     <button
-                      className="agent-add-btn"
+                      className="sandbox-add-btn"
                       onClick={handleAddAgent}
                       disabled={newAgentChecking || !newAgentUrl.trim()}
                     >
-                      {newAgentChecking ? t('agentSettings.checking') : t('agentSettings.connect')}
+                      {newAgentChecking ? t('sandboxSettings.checking') : t('sandboxSettings.connect')}
                     </button>
                   </div>
                   {newAgentError && <p className="settings-error">{newAgentError}</p>}
-                  <p className="settings-hint">{t('agentSettings.hint')}</p>
+                  <p className="settings-hint">{t('sandboxSettings.hint')}</p>
                 </>
               )}
 
@@ -784,7 +784,7 @@ const Settings = ({
               )}
 
               {!skillsLoading && skillsList.length === 0 && (
-                <div className="agents-empty">{t('skillSettings.empty')}</div>
+                <div className="sandboxes-empty">{t('skillSettings.empty')}</div>
               )}
 
               {!skillsLoading && skillsList.length > 0 && (

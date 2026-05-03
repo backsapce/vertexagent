@@ -417,8 +417,8 @@
   text-align: center;
 }
 
-/* Agents settings tab */
-.agents-list {
+/* Sandboxes settings tab */
+.sandboxes-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -426,7 +426,7 @@
   margin-bottom: 16px;
 }
 
-.agents-empty {
+.sandboxes-empty {
   padding: 16px;
   text-align: center;
   color: var(--color-text-quaternary);
@@ -435,7 +435,7 @@
   border-radius: 8px;
 }
 
-.agent-item {
+.sandbox-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -446,60 +446,60 @@
   transition: border-color 0.15s;
 }
 
-.agent-item.connected {
+.sandbox-item.connected {
   border-left: 3px solid #22c55e;
 }
 
-.agent-item.disconnected {
+.sandbox-item.disconnected {
   border-left: 3px solid var(--color-text-quaternary);
   opacity: 0.6;
 }
 
-.agent-item.needsAuth {
+.sandbox-item.needsAuth {
   border-left: 3px solid #f59e0b;
 }
 
-.agent-item-info {
+.sandbox-item-info {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
 }
 
-.agent-status-dot {
+.sandbox-status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.agent-status-dot.connected {
+.sandbox-status-dot.connected {
   background: #22c55e;
   box-shadow: 0 0 4px rgba(34, 197, 94, 0.4);
 }
 
-.agent-status-dot.disconnected {
+.sandbox-status-dot.disconnected {
   background: var(--color-text-quaternary);
 }
 
-.agent-status-dot.needsAuth {
+.sandbox-status-dot.needsAuth {
   background: #f59e0b;
   box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
 }
 
-.agent-item-details {
+.sandbox-item-details {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.agent-item-name {
+.sandbox-item-name {
   font-size: 13px;
   font-weight: 500;
   color: var(--color-text-heading);
 }
 
-.agent-item-url {
+.sandbox-item-url {
   font-size: 11px;
   color: var(--color-text-tertiary);
   overflow: hidden;
@@ -507,7 +507,7 @@
   white-space: nowrap;
 }
 
-.agent-remove-btn {
+.sandbox-remove-btn {
   background: transparent;
   border: none;
   color: var(--color-text-quaternary);
@@ -521,22 +521,22 @@
   flex-shrink: 0;
 }
 
-.agent-remove-btn:hover {
+.sandbox-remove-btn:hover {
   color: var(--color-error);
   background: rgba(239, 68, 68, 0.1);
 }
 
-.agent-add-row {
+.sandbox-add-row {
   display: flex;
   gap: 6px;
   align-items: center;
 }
 
-.agent-add-row input {
+.sandbox-add-row input {
   flex: 1;
 }
 
-.agent-add-btn {
+.sandbox-add-btn {
   background: var(--color-primary);
   border: none;
   color: var(--color-text);
@@ -549,23 +549,23 @@
   transition: background 0.15s, opacity 0.15s;
 }
 
-.agent-add-btn:hover:not(:disabled) {
+.sandbox-add-btn:hover:not(:disabled) {
   background: var(--color-primary-hover);
 }
 
-.agent-add-btn:disabled {
+.sandbox-add-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-/* Agent mode selector (server vs e2b) */
-.agent-mode-selector {
+/* Sandbox mode selector (server vs e2b) */
+.sandbox-mode-selector {
   display: flex;
   gap: 6px;
   margin-bottom: 10px;
 }
 
-.agent-mode-btn {
+.sandbox-mode-btn {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -580,18 +580,18 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
-.agent-mode-btn:hover {
+.sandbox-mode-btn:hover {
   background: var(--color-nav-hover);
   color: var(--color-text-heading);
 }
 
-.agent-mode-btn.active {
+.sandbox-mode-btn.active {
   background: var(--color-nav-active);
   color: var(--color-text-heading);
   border-color: var(--color-primary);
 }
 
-/* E2B add row (inside agents tab) */
+/* E2B add row (inside sandboxes tab) */
 .e2b-add-row {
   display: flex;
   gap: 6px;
@@ -624,28 +624,28 @@
   cursor: not-allowed;
 }
 
-/* E2B Cloud agent item */
-.agent-item.e2b {
+/* E2B Cloud sandbox item */
+.sandbox-item.e2b {
   border-left: 3px solid #8b5cf6;
   background: linear-gradient(135deg, var(--color-bg) 0%, rgba(139, 92, 246, 0.03) 100%);
 }
 
-.agent-status-dot.e2b {
+.sandbox-status-dot.e2b {
   background: #8b5cf6;
   box-shadow: 0 0 4px rgba(139, 92, 246, 0.4);
 }
 
-.agent-item.e2b .agent-item-url {
+.sandbox-item.e2b .sandbox-item-url {
   color: #8b5cf6;
   font-style: italic;
 }
 
-/* Agent token auth row */
-.agent-item {
+/* Sandbox token auth row */
+.sandbox-item {
   flex-wrap: wrap;
 }
 
-.agent-connect-btn {
+.sandbox-connect-btn {
   background: rgba(245, 158, 11, 0.15);
   border: 1px solid rgba(245, 158, 11, 0.3);
   color: #f59e0b;
@@ -659,11 +659,11 @@
   flex-shrink: 0;
 }
 
-.agent-connect-btn:hover {
+.sandbox-connect-btn:hover {
   background: rgba(245, 158, 11, 0.25);
 }
 
-.agent-token-row {
+.sandbox-token-row {
   width: 100%;
   display: flex;
   flex-wrap: wrap;
@@ -672,7 +672,7 @@
   align-items: center;
 }
 
-.agent-token-row input {
+.sandbox-token-row input {
   flex: 1;
   min-width: 160px;
   padding: 6px 10px;
@@ -684,7 +684,7 @@
   font-family: monospace;
 }
 
-.agent-token-row button {
+.sandbox-token-row button {
   background: var(--color-primary);
   border: none;
   color: var(--color-text);
@@ -696,18 +696,18 @@
   white-space: nowrap;
 }
 
-.agent-token-row button:disabled {
+.sandbox-token-row button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.agent-token-cancel {
+.sandbox-token-cancel {
   background: transparent !important;
   color: var(--color-text-secondary) !important;
   border: 1px solid var(--color-border) !important;
 }
 
-.agent-token-row .settings-error {
+.sandbox-token-row .settings-error {
   width: 100%;
   margin: 2px 0 0;
 }

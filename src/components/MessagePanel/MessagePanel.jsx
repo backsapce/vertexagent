@@ -458,11 +458,11 @@ const MessagePanel = ({
               const isE2b = connectedAgents.some((a) => a.isE2b && a.url === selectedAgentUrl);
               const e2bAgent = connectedAgents.find((a) => a.isE2b && a.url === selectedAgentUrl);
               return (
-                <span className={`agent-badge${isE2b ? ' e2b' : ''}`}>
-                  <div className="agent-badge-tooltip">
+                <span className={`sandbox-badge${isE2b ? ' e2b' : ''}`}>
+                  <div className="sandbox-badge-tooltip">
                     {isE2b && e2bAgent?.sandboxId
                       ? `E2B Cloud — ${e2bAgent.sandboxId}`
-                      : selectedAgentUrl || t('message.noAgentSelected')}
+                      : selectedAgentUrl || t('message.noSandboxSelected')}
                   </div>
                   {isE2b ? (
                     <Cloud width={14} height={14} />
@@ -470,10 +470,10 @@ const MessagePanel = ({
                     <Plug width={14} height={14} />
                   )}
                   {connectedAgents.length === 1 ? (
-                    isE2b ? <span>E2B</span> : <span>{t('message.agent')}</span>
+                    isE2b ? <span>E2B</span> : <span>{t('message.sandbox')}</span>
                   ) : (
                     <select
-                      className="agent-select-inline"
+                      className="sandbox-select-inline"
                       value={selectedAgentUrl || ''}
                       onChange={(e) => onSelectAgent(e.target.value || null)}
                     >
