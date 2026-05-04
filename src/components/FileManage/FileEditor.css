@@ -24,7 +24,7 @@
 .file-editor-modal {
   width: 90%;
   height: 90%;
-  background-color: var(--bg-secondary);
+  background-color: var(--color-surface-modal);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
@@ -49,8 +49,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-surface-alt);
 }
 
 .file-editor-title {
@@ -59,11 +59,11 @@
   gap: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--color-text);
 }
 
 .file-dirty-indicator {
-  color: var(--accent-color);
+  color: var(--color-primary);
   font-size: 16px;
 }
 
@@ -87,27 +87,27 @@
 }
 
 .file-editor-btn.save {
-  background-color: var(--accent-color);
-  color: var(--bg-primary);
+  background-color: var(--color-primary);
+  color: #ffffff;
 }
 
 .file-editor-btn.save:hover:not(:disabled) {
-  background-color: var(--accent-hover);
+  background-color: var(--color-primary-hover);
 }
 
 .file-editor-btn.save:disabled {
-  background-color: var(--border-color);
+  background-color: var(--color-border);
   cursor: not-allowed;
   opacity: 0.6;
 }
 
 .file-editor-btn.close {
   background-color: transparent;
-  color: var(--text-secondary);
+  color: var(--color-text);
 }
 
 .file-editor-btn.close:hover {
-  background-color: var(--danger-color);
+  background-color: var(--color-error);
   color: white;
 }
 
@@ -124,14 +124,14 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .loading-spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 16px;
@@ -170,10 +170,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px;
-  border-top: 1px solid var(--border-color);
-  background-color: var(--bg-tertiary);
+  border-top: 1px solid var(--color-border);
+  background-color: var(--color-surface-alt);
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .file-editor-status {
@@ -181,7 +181,7 @@
 }
 
 .file-editor-status[data-dirty="true"] {
-  color: var(--warning-color);
+  color: var(--color-warning-bg);
 }
 
 .file-editor-hint {
@@ -194,7 +194,7 @@
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  background-color: var(--success-color);
+  background-color: #22c55e;
   color: white;
   padding: 12px 24px;
   border-radius: 8px;

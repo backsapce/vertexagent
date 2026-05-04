@@ -57,6 +57,7 @@ function App() {
   const [nickname, setNickname] = useState('');
   const [agentList, setAgentList] = useState([]); // [{ id, name, createdAt }]
   const [chatAgents, setChatAgents] = useState({}); // { chatId -> agentId }
+  const [lastAgentId, setLastAgentId] = useState(null); // agent used by most recent chat
   const savePending = useRef(null);
   const abortRef = useRef(null);
   const streamingContentRef = useRef('');  // accumulates chunks outside React state
@@ -81,7 +82,20 @@ function App() {
         if (savedNickname) setNickname(savedNickname);
         return Promise.all([
           loadChats()
-            .then((saved) => { if (saved.length) setChats(saved); })
+            .then((saved) => {
+              if (saved.length) {
+                setChats(saved);
+                // Restore per-chat agent assignments from persisted chat metadata
+                const agentMap = {};
+                for (const chat of saved) {
+                  if (chat.agentId) agentMap[chat.id] = chat.agentId;
+                }
+                setChatAgents(agentMap);
+                // Set lastAgentId from the most recent chat that has an agent
+                const lastWithAgent = saved.find((c) => c.agentId);
+                if (lastWithAgent) setLastAgentId(lastWithAgent.agentId);
+              }
+            })
             .catch((err) => { console.error('OPFS load failed:', err); setInitError('Failed to load chats'); }),
           llm.init()
             .then(() => setLlmReady(true))
@@ -157,25 +171,35 @@ function App() {
     const current = chats.find((c) => c.id === activeChatId);
     if (current && current.messages.length === 0) return;
 
+    // Use last used agent, falling back to first available agent
+    const agentId = lastAgentId ?? (agentList.length > 0 ? agentList[0].id : null);
+
     const newChat = {
       id: generateId(),
       title: 'New Chat',
       lastMessage: '',
       updatedAt: formatTime(new Date()),
       messages: [],
+      ...(agentId && { agentId }),
     };
     setChats((prev) => [newChat, ...prev]);
     setActiveChatId(newChat.id);
 
-    // Auto-select the first available agent for this chat
-    if (agentList.length > 0) {
-      setChatAgents((prev) => ({ ...prev, [newChat.id]: agentList[0].id }));
+    if (agentId) {
+      setChatAgents((prev) => ({ ...prev, [newChat.id]: agentId }));
     }
-  }, [chats, activeChatId, agentList]);
+  }, [chats, activeChatId, agentList, lastAgentId]);
 
   const handleSelectChat = useCallback((chatId) => {
     setActiveChatId(chatId);
-  }, []);
+    // Restore the agent for this chat and update tracking
+    const chat = chats.find((c) => c.id === chatId);
+    const agentId = chat?.agentId;
+    if (agentId) {
+      setLastAgentId(agentId);
+      selectedAgentRef.current = agentId;
+    }
+  }, [chats]);
 
   const handleDeleteChat = useCallback(async (chatId) => {
     // First, delete the chat file from OPFS
@@ -345,21 +369,20 @@ function App() {
       if (!activeChatId) {
         // Auto-create a chat if none selected
         const userMsg = { id: generateId(), role: 'user', content: text, ...(images && { images }) };
+        const agentId = lastAgentId ?? (agentList.length > 0 ? agentList[0].id : null);
         const newChat = {
           id: generateId(),
           title: text.slice(0, 30) + (text.length > 30 ? '...' : ''),
           lastMessage: text || (images ? '[Image]' : ''),
           updatedAt: formatTime(new Date()),
           messages: [userMsg],
+          ...(agentId && { agentId }),
         };
         setChats((prev) => [newChat, ...prev]);
         setActiveChatId(newChat.id);
-        // Auto-select the first available agent for this chat
-        if (agentList.length > 0) {
-          setChatAgents((prev) => ({ ...prev, [newChat.id]: agentList[0].id }));
+        if (agentId) {
+          setChatAgents((prev) => ({ ...prev, [newChat.id]: agentId }));
         }
-        // Schedule stream outside of state updater to avoid StrictMode double-fire
-        const agentId = agentList.length > 0 ? agentList[0].id : null;
         setTimeout(() => streamResponse(newChat.id, [userMsg], { agentId }), 0);
         return;
       }
@@ -387,7 +410,7 @@ function App() {
         return updated;
       });
     },
-    [activeChatId, streaming, streamResponse, agentList]
+    [activeChatId, streaming, streamResponse, lastAgentId, agentList]
   );
 
   // Track online/offline status
@@ -554,6 +577,18 @@ function App() {
         agentId={activeChatId ? chatAgents[activeChatId] || null : null}
         onAgentChange={async (chatId, newAgentId) => {
           setChatAgents((prev) => ({ ...prev, [chatId]: newAgentId }));
+          // Also update the chat's persisted agentId and tracking
+          setChats((prev) =>
+            prev.map((c) =>
+              c.id === chatId
+                ? { ...c, agentId: newAgentId }
+                : c
+            )
+          );
+          if (newAgentId) {
+            setLastAgentId(newAgentId);
+            selectedAgentRef.current = newAgentId;
+          }
         }}
         onAgentListChange={async (newList) => {
           setAgentList(newList);
