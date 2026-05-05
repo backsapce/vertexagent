@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 import react from '@vitejs/plugin-react'
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs'
 import { resolve, join, relative } from 'path'
@@ -71,9 +72,10 @@ const agentProxy = {
 export default defineConfig(() => {
   return {
     base: GH_PAGES_BASE,
-    plugins: [react(), swPrecachePlugin()],
+    plugins: [basicSsl(), react(), swPrecachePlugin()],
     server: {
       port: 5173,
+      https: true,
       proxy: agentProxy,
     },
     preview: {

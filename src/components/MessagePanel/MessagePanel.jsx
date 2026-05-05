@@ -246,7 +246,7 @@ const MessagePanel = ({
   agentList,
   agentId,
   onAgentChange,
-  onAgentListChange: _onAgentListChange,
+  onAgentListChange,
   activeChatId,
 }) => {
   const { t } = useI18n();
@@ -336,6 +336,8 @@ const MessagePanel = ({
         onFactoryReset={onFactoryReset}
         nickname={nickname}
         onNicknameChange={onNicknameChange}
+        agentList={agentList}
+        onAgentListChange={onAgentListChange}
       />
 
 

@@ -75,14 +75,12 @@ async function copyDirContents(srcDir, destDir) {
 
 /**
  * Get the workspace directory name for a given agent ID.
- * Looks up the agent's current display name from config.
+ * Uses the stable agent ID as the directory name (not the display name).
  * @param {string} agentId
  * @returns {Promise<string>}
  */
 export async function getWorkspaceDirName(agentId) {
-  const agents = await listAgents();
-  const agent = agents.find((a) => a.id === agentId);
-  return agent ? agent.name : agentId;
+  return agentId;
 }
 
 // ─── ID generation ────────────────────────────────────────────────────────────
@@ -170,8 +168,6 @@ export async function createAgent(name) {
  */
 export async function deleteAgent(id) {
   const agents = await listAgents();
-  const agent = agents.find((a) => a.id === id);
-  const workspaceName = agent ? agent.name : id;
   const remaining = agents.filter((a) => a.id !== id);
   await config.set('agentsList', remaining);
 
@@ -179,74 +175,52 @@ export async function deleteAgent(id) {
   try {
     const root = await getRootDir();
     const wsDir = await root.getDirectoryHandle(WORKSPACE_DIR);
-    await wsDir.removeEntry(workspaceName, { recursive: true });
+    await wsDir.removeEntry(id, { recursive: true });
   } catch {
     // workspace may not exist
   }
 }
 
 /**
- * Update an agent's display name. Also renames the workspace directory.
+ * Update an agent's display name.
+ * Workspace directory uses stable agent ID, so no rename needed.
  * @param {string} id
  * @param {string} name
  */
 export async function updateAgentName(id, name) {
   const agents = await listAgents();
-  const agent = agents.find((a) => a.id === id);
-  const oldName = agent ? agent.name : id;
   const updated = agents.map((a) => (a.id === id ? { ...a, name } : a));
   await config.set('agentsList', updated);
 
-  // Rename workspace directory from old name to new name
+  // Update meta.json with new name
   try {
-    const root = await getRootDir();
-    const wsParent = await root.getDirectoryHandle(WORKSPACE_DIR);
-    const oldDir = await wsParent.getDirectoryHandle(oldName);
-
-    // Create new directory
-    const newDir = await wsParent.getDirectoryHandle(name, { create: true });
-
-    // Copy all entries from old dir to new dir
-    for await (const [entryName, handle] of oldDir) {
-      if (handle.kind === 'directory') {
-        const newSubDir = await newDir.getDirectoryHandle(entryName, { create: true });
-        await copyDirContents(handle, newSubDir);
-      } else if (handle.kind === 'file') {
-        const file = await handle.getFile();
-        const content = await file.text();
-        const newFile = await newDir.getFileHandle(entryName, { create: true });
-        const writable = await newFile.createWritable();
-        await writable.write(content);
-        await writable.close();
-      }
-    }
-
-    // Remove old directory
-    await wsParent.removeEntry(oldName, { recursive: true });
-
-    // Update meta.json with new name
-    const existing = await readJSON(newDir, 'meta.json');
+    const wsDir = await getWorkspaceDir(id);
+    const existing = await readJSON(wsDir, 'meta.json');
     if (existing) {
-      await writeJSON(newDir, 'meta.json', { ...existing, name });
+      await writeJSON(wsDir, 'meta.json', { ...existing, name });
     }
+  } catch {
+    // workspace may not exist yet
+  }
 
-    // Update AGENTS.md with new name
+  // Update AGENTS.md with new name
+  try {
     const agentsContent = await readAgentAgentsFile(id);
     if (agentsContent) {
-      const updated = agentsContent
+      const updatedContent = agentsContent
         .replace(/^name:.*$/m, `name: ${name}`)
         .replace(/^# Agent:.*$/m, `# Agent: ${name}`)
         .replace(/\*\*Name:\*\*.*$/m, `**Name:** ${name}`);
-      await writeAgentAgentsFile(id, updated);
+      await writeAgentAgentsFile(id, updatedContent);
     }
   } catch {
-    // workspace may not exist, still update config name
+    // AGENTS.md may not exist yet
   }
 }
 
 /**
  * Get the OPFS directory handle for an agent's workspace root.
- * Uses the agent's current display name as the directory name.
+ * Uses the stable agent ID as the directory name.
  * @param {string} agentId
  * @returns {Promise<FileSystemDirectoryHandle>}
  */
@@ -293,7 +267,7 @@ Maintain notes about the user and your work in memory files. Use memory tools to
 
 /**
  * Ensure an agent's workspace directories exist.
- * Uses the agent's current display name as the directory name.
+ * Uses the stable agent ID as the directory name.
  * @param {string} agentId
  * @param {string} [name] — optional display name for AGENTS.md
  */

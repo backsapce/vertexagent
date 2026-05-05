@@ -553,7 +553,7 @@ export async function readSkillRef(skillName, filename) {
 const WORKSPACE_DIR = 'workspace';
 
 /**
- * Resolve the workspace directory name for an agent (uses the agent's current display name).
+ * Resolve the workspace directory name for an agent (uses the stable agent ID).
  * @param {string} agentId
  * @returns {Promise<string>}
  */
