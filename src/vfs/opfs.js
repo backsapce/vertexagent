@@ -5,6 +5,7 @@
 
 import JSZip from 'jszip';
 import { getWorkspaceDirName } from '../agents/agents.js';
+import { notifySync } from '../sync/opfsBridge.js';
 
 const ROOT_DIR = 'vertex-agent';
 
@@ -13,7 +14,7 @@ const ROOT_DIR = 'vertex-agent';
 /**
  * Get the root directory handle for the application.
  */
-async function getRootDir() {
+export async function getRootDir() {
   const root = await navigator.storage.getDirectory();
   return root.getDirectoryHandle(ROOT_DIR, { create: true });
 }
@@ -23,7 +24,7 @@ async function getRootDir() {
  * @param {string[]} pathParts - Array of directory names
  * @returns {Promise<FileSystemDirectoryHandle>}
  */
-async function getDirectory(...pathParts) {
+export async function getDirectory(...pathParts) {
   let dir = await getRootDir();
   for (const part of pathParts) {
     dir = await dir.getDirectoryHandle(part, { create: true });
@@ -66,7 +67,7 @@ async function writeJSON(dirHandle, filename, data) {
  * @param {string} filename
  * @returns {Promise<string|null>}
  */
-async function readText(dirHandle, filename) {
+export async function readText(dirHandle, filename) {
   try {
     const fileHandle = await dirHandle.getFileHandle(filename);
     const file = await fileHandle.getFile();
@@ -82,7 +83,7 @@ async function readText(dirHandle, filename) {
  * @param {string} filename
  * @param {string|Blob} content
  */
-async function writeText(dirHandle, filename, content) {
+export async function writeText(dirHandle, filename, content) {
   const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(content);
@@ -94,7 +95,7 @@ async function writeText(dirHandle, filename, content) {
  * @param {FileSystemDirectoryHandle} dirHandle
  * @param {string} filename
  */
-async function deleteEntry(dirHandle, filename) {
+export async function deleteEntry(dirHandle, filename) {
   try {
     await dirHandle.removeEntry(filename);
   } catch (_e) { /* ignore */ }
@@ -105,7 +106,7 @@ async function deleteEntry(dirHandle, filename) {
  * @param {FileSystemDirectoryHandle} dirHandle
  * @returns {Promise<Array<{name: string, kind: 'file'|'directory'}>>}
  */
-async function listEntries(dirHandle) {
+export async function listEntries(dirHandle) {
   const entries = [];
   for await (const [name, handle] of dirHandle) {
     entries.push({ name, kind: handle.kind });
@@ -154,6 +155,7 @@ export async function saveChats(chats) {
   await Promise.all(
     chats.map((chat) => writeJSON(msgsDir, `${chat.id}.json`, chat.messages))
   );
+  notifySync();
 }
 
 /**
@@ -173,6 +175,8 @@ export async function deleteChat(chats, chatId) {
     remaining.map(({ messages: _messages, ...rest }) => rest)
   );
   await deleteEntry(msgsDir, `${chatId}.json`);
+
+  notifySync();
 
   return remaining;
 }
@@ -314,6 +318,7 @@ export async function saveFile(fileName, blob, dirName) {
     ? await getDirectory(dirName)
     : await getDirectory('files');
   await writeText(dir, fileName, blob);
+  notifySync();
 }
 
 /**
@@ -335,6 +340,7 @@ export async function deleteFile(fileName, category, isDirectory = false) {
       : await getDirectory('files');
 
   await dir.removeEntry(fileName, { recursive: isDirectory });
+  notifySync();
 }
 
 /**
@@ -368,6 +374,7 @@ export async function getFileBlob(fileName, category) {
 export async function createFile(fileName, dirName) {
   const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
   await writeText(dir, fileName, '');
+  notifySync();
 }
 
 /**
@@ -379,6 +386,7 @@ export async function createFile(fileName, dirName) {
 export async function createDirectory(dirName, parentDirName) {
   const parentDir = parentDirName ? await getDirectory(...parentDirName.split('/')) : await getRootDir();
   await parentDir.getDirectoryHandle(dirName, { create: true });
+  notifySync();
 }
 
 /**
@@ -404,6 +412,7 @@ export async function readFileContent(fileName, dirName) {
 export async function saveFileContent(fileName, content, dirName) {
   const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
   await writeText(dir, fileName, content);
+  notifySync();
 }
 
 // ─── Memory Operations ────────────────────────────────────────────────────────
@@ -434,6 +443,7 @@ export async function readMemoryFile(filename) {
 export async function writeMemoryFile(filename, content) {
   const dir = await getDirectory(MEMORY_DIR);
   await writeText(dir, filename, content);
+  notifySync();
 }
 
 /**
@@ -444,6 +454,7 @@ export async function deleteMemoryFile(filename) {
   try {
     const dir = await getDirectory(MEMORY_DIR);
     await deleteEntry(dir, filename);
+    notifySync();
   } catch { /* ignore */ }
 }
 
@@ -502,6 +513,7 @@ export async function readSkillFile(skillName, filename) {
 export async function writeSkillFile(skillName, filename, content) {
   const dir = await getDirectory(SKILLS_DIR, skillName);
   await writeText(dir, filename, content);
+  notifySync();
 }
 
 /**
@@ -512,6 +524,7 @@ export async function deleteSkillDir(skillName) {
   try {
     const dir = await getDirectory(SKILLS_DIR);
     await dir.removeEntry(skillName, { recursive: true });
+    notifySync();
   } catch { /* ignore */ }
 }
 
@@ -628,6 +641,7 @@ export async function readAgentAgentsFile(agentId) {
 export async function writeAgentAgentsFile(agentId, content) {
   const dir = await getAgentDir(agentId);
   await writeText(dir, 'AGENTS.md', content);
+  notifySync();
 }
 
 // Agent-scoped memory operations
@@ -644,12 +658,14 @@ export async function readAgentMemoryFile(agentId, filename) {
 export async function writeAgentMemoryFile(agentId, filename, content) {
   const dir = await getAgentMemoryDir(agentId);
   await writeText(dir, filename, content);
+  notifySync();
 }
 
 export async function deleteAgentMemoryFile(agentId, filename) {
   try {
     const dir = await getAgentMemoryDir(agentId);
     await deleteEntry(dir, filename);
+    notifySync();
   } catch { /* ignore */ }
 }
 
@@ -682,6 +698,7 @@ export async function writeAgentSkillFile(agentId, skillName, filename, content)
   const dir = await getAgentSkillsDir(agentId);
   const skillDir = await dir.getDirectoryHandle(skillName, { create: true });
   await writeText(skillDir, filename, content);
+  notifySync();
 }
 
 export async function deleteAgentSkillDir(agentId, skillName) {
@@ -689,6 +706,7 @@ export async function deleteAgentSkillDir(agentId, skillName) {
     const dir = await getAgentSkillsDir(agentId);
     await dir.removeEntry(skillName, { recursive: true });
   } catch { /* ignore */ }
+    notifySync();
 }
 
 // Agent-scoped file operations
@@ -736,6 +754,7 @@ export async function writeAgentFile(agentId, path, content) {
     ? await getAgentDir(agentId, 'files', ...parts)
     : await getAgentFilesDir(agentId);
   await writeText(dir, fileName, content);
+  notifySync();
 }
 
 export async function createAgentFile(agentId, path, isDirectory = false) {
@@ -749,6 +768,7 @@ export async function createAgentFile(agentId, path, isDirectory = false) {
   } else {
     await writeText(dir, name, '');
   }
+  notifySync();
 }
 
 export async function deleteAgentFile(agentId, path) {
@@ -759,5 +779,40 @@ export async function deleteAgentFile(agentId, path) {
     : await getAgentFilesDir(agentId);
   try {
     await dir.removeEntry(name, { recursive: true });
+    notifySync();
   } catch { /* ignore */ }
+}
+
+// ─── Sync Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Recursively collect all files in OPFS with their content.
+ * Used by the sync system for full and incremental sync.
+ * @returns {Promise<Array<{path: string, content: string, size: number}>>}
+ */
+export async function listAllFiles() {
+  const root = await getRootDir();
+  const files = [];
+
+  async function collect(dir, prefix = '') {
+    for (const { name, kind } of await listEntries(dir)) {
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (kind === 'file') {
+        let content = '';
+        let size = 0;
+        try {
+          content = await readText(dir, name) ?? '';
+          size = content.length;
+        } catch {
+          // binary file, skip content
+        }
+        files.push({ path, content, size });
+      } else {
+        await collect(await dir.getDirectoryHandle(name), path);
+      }
+    }
+  }
+
+  await collect(root);
+  return files;
 }

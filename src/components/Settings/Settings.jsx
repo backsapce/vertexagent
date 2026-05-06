@@ -6,6 +6,8 @@ import { SUPPORTED_LOCALES } from '../../i18n/locales';
 import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User, Cloud, Layers } from '../Icons/Icons';
 import { listAllSkills, setSkillEnabled } from '../../agent/skills';
 import { createAgent, deleteAgent, updateAgentName, listAgents } from '../../agents/agents';
+import { saveSyncSettings, testSyncConnection, fullSyncToServer, fullSyncFromServer } from '../../sync/syncManager';
+import config from '../../config/config';
 import './Settings.css';
 
 const Settings = ({
@@ -61,6 +63,33 @@ const Settings = ({
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState(null);
   const [editingAgentName, setEditingAgentName] = useState('');
+  const [syncUrl, setSyncUrl] = useState('');
+  const [syncUsername, setSyncUsername] = useState('');
+  const [syncPassword, setSyncPassword] = useState('');
+  const [syncEnabled, setSyncEnabled] = useState(false);
+  const [syncMode, setSyncMode] = useState('manual');
+  const [syncConnecting, setSyncConnecting] = useState(false);
+  const [syncConnectResult, setSyncConnectResult] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState(null);
+  const [syncLastSynced, setSyncLastSynced] = useState(null);
+  const [syncLastError, setSyncLastError] = useState(null);
+
+  // Load sync settings when tab changes to sync
+  useEffect(() => {
+    if (settingsTab === 'sync') {
+      const cfg = config.get('sync') || {};
+      setSyncUrl(cfg.url || '');
+      setSyncUsername(cfg.username || '');
+      setSyncPassword('');
+      setSyncEnabled(cfg.enabled || false);
+      setSyncMode(cfg.mode || 'manual');
+      setSyncLastSynced(cfg.lastSynced || null);
+      setSyncLastError(cfg.lastError || null);
+      setSyncConnectResult(null);
+      setSyncMessage(null);
+    }
+  }, [settingsTab]);
 
   // Load agents when tab changes to agents
   useEffect(() => {
@@ -308,6 +337,85 @@ const Settings = ({
     onClose();
   };
 
+  const handleTestSyncConnection = async () => {
+    setSyncConnecting(true);
+    setSyncConnectResult(null);
+    try {
+      await testSyncConnection(syncUrl, syncUsername, syncPassword);
+      setSyncConnectResult({ success: true });
+    } catch (err) {
+      setSyncConnectResult({ success: false, error: err.message });
+    } finally {
+      setSyncConnecting(false);
+    }
+  };
+
+  const handleSaveSync = async () => {
+    await saveSyncSettings({
+      enabled: syncEnabled,
+      mode: syncMode,
+      url: syncUrl.replace(/\/+$/, ''),
+      username: syncUsername,
+      ...(syncPassword && { password: syncPassword }),
+      lastSynced: syncLastSynced,
+      lastError: syncLastError,
+    });
+    setSyncMessage({ type: 'success', text: t('syncSettings.saved') });
+  };
+
+  const handleUploadToServer = async () => {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const url = syncUrl.replace(/\/+$/, '');
+      const password = syncPassword || config.get('sync.password');
+      await fullSyncToServer(url, syncUsername, password);
+      const now = new Date().toISOString();
+      setSyncLastSynced(now);
+      await config.set('sync.lastSynced', now);
+      setSyncMessage({ type: 'success', text: t('syncSettings.uploadSuccess') });
+    } catch (err) {
+      setSyncMessage({ type: 'error', text: t('syncSettings.uploadFailed', { error: err.message }) });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleDownloadFromServer = async () => {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const url = syncUrl.replace(/\/+$/, '');
+      const password = syncPassword || config.get('sync.password');
+      await fullSyncFromServer(url, syncUsername, password);
+      setSyncMessage({ type: 'success', text: t('syncSettings.downloadSuccess') });
+    } catch (err) {
+      setSyncMessage({ type: 'error', text: t('syncSettings.downloadFailed', { error: err.message }) });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleEnableAutoSync = async () => {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const url = syncUrl.replace(/\/+$/, '');
+      const password = syncPassword || config.get('sync.password');
+      await fullSyncToServer(url, syncUsername, password);
+      const now = new Date().toISOString();
+      await config.merge('sync', { enabled: true, mode: 'auto', lastSynced: now });
+      setSyncEnabled(true);
+      setSyncMode('auto');
+      setSyncLastSynced(now);
+      setSyncMessage({ type: 'success', text: t('syncSettings.autoSyncEnabled') });
+    } catch (err) {
+      setSyncMessage({ type: 'error', text: t('syncSettings.autoSyncFailed', { error: err.message }) });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   if (!show) return null;
 
   return (
@@ -382,6 +490,13 @@ const Settings = ({
             >
               <Layers width={16} height={16} />
               {t('settings.skills')}
+            </button>
+            <button
+              className={`settings-nav-item ${settingsTab === 'sync' ? 'active' : ''}`}
+              onClick={() => setSettingsTab('sync')}
+            >
+              <Cloud width={16} height={16} />
+              {t('settings.sync')}
             </button>
           </nav>
         </div>
@@ -957,6 +1072,139 @@ const Settings = ({
                   </div>
                 </>
               )}
+            </div>
+          )}
+          {settingsTab === 'sync' && (
+            <div className="settings-section">
+              <h3>{t('syncSettings.title')}</h3>
+              <p className="settings-desc">{t('syncSettings.desc')}</p>
+
+              {syncMessage && (
+                <p className={`settings-${syncMessage.type === 'error' ? 'error' : 'success'}`}>{syncMessage.text}</p>
+              )}
+
+              <label className="sync-toggle-label">
+                <span>{t('syncSettings.enableSync')}</span>
+                <input
+                  type="checkbox"
+                  checked={syncEnabled}
+                  onChange={(e) => setSyncEnabled(e.target.checked)}
+                />
+                <span className="sync-toggle-slider"></span>
+              </label>
+
+              <label>{t('syncSettings.serverUrl')}</label>
+              <input
+                type="text"
+                placeholder={t('syncSettings.serverUrlPlaceholder')}
+                value={syncUrl}
+                onChange={(e) => setSyncUrl(e.target.value)}
+                disabled={!syncEnabled}
+              />
+              <p className="settings-hint">{t('syncSettings.serverUrlHint')}</p>
+
+              <label>{t('syncSettings.username')}</label>
+              <input
+                type="text"
+                placeholder={t('syncSettings.usernamePlaceholder')}
+                value={syncUsername}
+                onChange={(e) => setSyncUsername(e.target.value)}
+                disabled={!syncEnabled}
+              />
+
+              <label>{t('syncSettings.password')}</label>
+              <input
+                type="password"
+                placeholder={t('syncSettings.passwordPlaceholder')}
+                value={syncPassword}
+                onChange={(e) => setSyncPassword(e.target.value)}
+                disabled={!syncEnabled}
+              />
+              {config.get('sync.password') && !syncPassword && (
+                <p className="settings-hint">{t('syncSettings.passwordSaved')}</p>
+              )}
+
+              <div className="sync-test-row">
+                <button
+                  className="sync-test-btn"
+                  disabled={syncConnecting || !syncUrl || !syncUsername || !syncPassword}
+                  onClick={handleTestSyncConnection}
+                >
+                  {syncConnecting ? t('syncSettings.testing') : t('syncSettings.testConnection')}
+                </button>
+                {syncConnectResult && (
+                  <span className={`sync-test-result ${syncConnectResult.success ? 'success' : 'error'}`}>
+                    {syncConnectResult.success ? t('syncSettings.testSuccess') : syncConnectResult.error}
+                  </span>
+                )}
+              </div>
+
+              <label>{t('syncSettings.syncMode')}</label>
+              <label className="sync-mode-toggle-label">
+                <span className="sync-mode-text">{syncMode === 'auto' ? t('syncSettings.autoMode') : t('syncSettings.manualMode')}</span>
+                <input
+                  type="checkbox"
+                  checked={syncMode === 'auto'}
+                  onChange={(e) => setSyncMode(e.target.checked ? 'auto' : 'manual')}
+                />
+                <span className="sync-mode-toggle-slider"></span>
+              </label>
+
+              {syncMode === 'auto' && !syncEnabled && (
+                <p className="settings-hint">{t('syncSettings.autoRequiresEnabled')}</p>
+              )}
+
+              {syncMode === 'manual' && syncEnabled && (
+                <div className="sync-actions">
+                  <div className="sync-action-card">
+                    <div className="sync-action-icon"><UploadCloud width={24} height={24} /></div>
+                    <div className="sync-action-info">
+                      <span className="sync-action-title">{t('syncSettings.uploadTitle')}</span>
+                      <span className="sync-action-desc">{t('syncSettings.uploadDesc')}</span>
+                    </div>
+                    <button className="sync-action-btn" disabled={syncing || !syncUrl || !syncUsername} onClick={handleUploadToServer}>
+                      {syncing ? t('syncSettings.syncing') : t('syncSettings.upload')}
+                    </button>
+                  </div>
+                  <div className="sync-action-card">
+                    <div className="sync-action-icon"><DownloadCloud width={24} height={24} /></div>
+                    <div className="sync-action-info">
+                      <span className="sync-action-title">{t('syncSettings.downloadTitle')}</span>
+                      <span className="sync-action-desc">{t('syncSettings.downloadDesc')}</span>
+                    </div>
+                    <button className="sync-action-btn" disabled={syncing || !syncUrl || !syncUsername} onClick={handleDownloadFromServer}>
+                      {syncing ? t('syncSettings.syncing') : t('syncSettings.download')}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {syncMode === 'auto' && syncEnabled && (
+                <div className="sync-auto-row">
+                  <button
+                    className="sync-auto-btn"
+                    disabled={syncing || !syncUrl || !syncUsername}
+                    onClick={handleEnableAutoSync}
+                  >
+                    {syncing ? t('syncSettings.syncing') : t('syncSettings.enableAutoSync')}
+                  </button>
+                  <p className="settings-hint">{t('syncSettings.autoSyncHint')}</p>
+                </div>
+              )}
+
+              {syncLastSynced && (
+                <p className="sync-status">
+                  {t('syncSettings.lastSynced')}: {new Date(syncLastSynced).toLocaleString()}
+                </p>
+              )}
+              {syncLastError && (
+                <p className="settings-error">{t('syncSettings.lastError', { error: syncLastError })}</p>
+              )}
+
+              <div className="settings-actions">
+                <button className="settings-cancel" onClick={onClose}>{t('settings.cancel')}</button>
+                <button className="settings-save" onClick={handleSaveSync}>{t('settings.save')}</button>
+              </div>
             </div>
           )}
         </div>

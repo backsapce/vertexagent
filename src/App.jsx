@@ -12,6 +12,7 @@ import { ensureDefaultAgent, listAgents } from './agents/agents';
 import { I18nProvider } from './i18n/index';
 import { useI18n } from './i18n/context';
 import { WifiOff, ChevronRight } from './components/Icons/Icons';
+import { useSyncInterceptor } from './sync/useSyncInterceptor';
 import './App.css';
 
 function generateId() {
@@ -64,6 +65,9 @@ function App() {
   const streamingThinkingRef = useRef(''); // accumulates thinking/reasoning chunks
   const rafRef = useRef(null);            // requestAnimationFrame id for UI sync
   const selectedAgentRef = useRef(null); // avoid stale closure
+
+  // Initialize sync interceptor for auto-sync (if enabled in settings)
+  useSyncInterceptor();
 
   // Load config, chats and LLM settings from OPFS on mount
   useEffect(() => {
