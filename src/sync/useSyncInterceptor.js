@@ -7,12 +7,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import config from '../config/config.js';
 import { incrementalSync } from './syncManager.js';
-import { setSyncNotifyCallback } from './opfsBridge.js';
+import { setSyncNotifyCallback, withoutSyncNotification } from './opfsBridge.js';
 
 const DEBOUNCE_MS = 500;
 
 export function useSyncInterceptor() {
   const syncingRef = useRef(false);
+  const suppressConfigSyncRef = useRef(false);
 
   const [status, setStatus] = useState({
     syncing: false,
@@ -32,16 +33,23 @@ export function useSyncInterceptor() {
       syncingRef.current = false;
       return;
     }
-    if (!syncConfig?.url || !syncConfig?.username) {
+
+    const syncMethod = syncConfig.method || syncConfig.provider || 'webdav';
+    const s3Config = syncConfig.s3 || {};
+    const hasWebdavCredentials = Boolean(syncConfig.url && syncConfig.username && syncConfig.password);
+    const hasS3Credentials = Boolean(
+      (s3Config.endpoint || syncConfig.endpoint || syncConfig.url) &&
+      (s3Config.bucket || syncConfig.bucket) &&
+      (s3Config.accessKeyId || syncConfig.accessKeyId || syncConfig.username) &&
+      (s3Config.secretAccessKey || syncConfig.secretAccessKey || syncConfig.password)
+    );
+
+    if (syncMethod === 's3' ? !hasS3Credentials : !hasWebdavCredentials) {
       syncingRef.current = false;
       return;
     }
 
-    const fullPassword = syncConfig.password || config.get('sync.password');
-    if (!fullPassword) {
-      syncingRef.current = false;
-      return;
-    }
+    const fullPassword = syncConfig.password || s3Config.secretAccessKey || syncConfig.secretAccessKey;
 
     setStatus(prev => ({ ...prev, syncing: true }));
 
@@ -55,7 +63,9 @@ export function useSyncInterceptor() {
       );
 
       const now = new Date().toISOString();
-      await config.set('sync.lastSynced', now);
+      suppressConfigSyncRef.current = true;
+      await withoutSyncNotification(() => config.set('sync.lastSynced', now));
+      suppressConfigSyncRef.current = false;
 
       setStatus({
         syncing: false,
@@ -70,6 +80,7 @@ export function useSyncInterceptor() {
         lastSynced: prev.lastSynced,
         lastError: err.message,
       }));
+      suppressConfigSyncRef.current = false;
     } finally {
       syncingRef.current = false;
     }
@@ -89,6 +100,8 @@ export function useSyncInterceptor() {
   // Subscribe to config changes for sync settings
   useEffect(() => {
     const unsub = config.subscribe(() => {
+      if (suppressConfigSyncRef.current) return;
+
       const syncConfig = config.get('sync');
       if (syncConfig?.enabled && syncConfig?.mode === 'auto') {
         scheduleSync();

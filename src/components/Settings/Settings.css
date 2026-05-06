@@ -1198,6 +1198,21 @@
   opacity: 0.6;
 }
 
+.settings-section select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.sync-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.sync-grid label {
+  margin-top: 0;
+}
+
 .sync-test-row {
   display: flex;
   align-items: center;
@@ -1376,6 +1391,10 @@
 }
 
 @media (max-width: 768px) {
+  .sync-grid {
+    grid-template-columns: 1fr;
+  }
+
   .settings-overlay {
     align-items: stretch;
     justify-content: stretch;

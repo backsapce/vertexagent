@@ -6,18 +6,30 @@
  */
 
 let syncNotifyCallback = null;
+let syncNotificationsPaused = 0;
 
 export function setSyncNotifyCallback(callback) {
   syncNotifyCallback = callback;
 }
 
 export function notifySync() {
+  if (syncNotificationsPaused > 0) return;
+
   if (syncNotifyCallback) {
     try {
       syncNotifyCallback();
     } catch (_e) {
       // sync notification should never break the VFS operation
     }
+  }
+}
+
+export async function withoutSyncNotification(fn) {
+  syncNotificationsPaused++;
+  try {
+    return await fn();
+  } finally {
+    syncNotificationsPaused--;
   }
 }
 
