@@ -70,6 +70,13 @@ function serveStatic(res, filePath) {
   }
 }
 
+function resolveStaticPath(pathname) {
+  const resolvedPath = resolve(STATIC_DIR, `.${pathname}`);
+  return resolvedPath === STATIC_DIR || resolvedPath.startsWith(STATIC_DIR + sep)
+    ? resolvedPath
+    : null;
+}
+
 // ─── CORS ───────────────────────────────────────────────────────────────────
 
 function corsHeaders(req) {
@@ -194,6 +201,14 @@ async function readBody(req) {
   let body = '';
   for await (const chunk of req) body += chunk;
   return body;
+}
+
+async function readBodyBuffer(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
 }
 
 // ─── Server ─────────────────────────────────────────────────────────────────
@@ -403,26 +418,29 @@ const server = createServer(async (req, res) => {
       }
 
       const boundary = `--${boundaryMatch[1] || boundaryMatch[2]}`;
-      const body = await readBody(req);
+      const body = (await readBodyBuffer(req)).toString('latin1');
       const parts = body.split(boundary);
       let filePath = '';
       let fileContent = null;
 
       for (const part of parts) {
-        if (!part.trim() || part === '--' || part === '-') continue;
-        const cleanPart = part.replace(/^\r?\n/, '').replace(/\r?\n$/, '');
-        const [headers, ...contentParts] = cleanPart.split(/\r?\n\r?\n/);
-        const content = contentParts.join('\r\n\r\n');
+        if (!part || part === '--' || part === '--\r\n') continue;
+        const cleanPart = part.replace(/^\r?\n/, '');
+        const headerEnd = cleanPart.indexOf('\r\n\r\n');
+        if (headerEnd === -1) continue;
+        const headers = cleanPart.slice(0, headerEnd);
+        let content = cleanPart.slice(headerEnd + 4);
+        if (content.endsWith('\r\n')) content = content.slice(0, -2);
         const contentDisposition = headers.match(/Content-Disposition:\s*form-data;\s*(.*)/i);
         if (contentDisposition) {
           const nameMatch = contentDisposition[1].match(/name="([^"]+)"/);
           const filenameMatch = contentDisposition[1].match(/filename="([^"]+)"/);
           if (nameMatch && nameMatch[1] === 'path') filePath = content.trim();
-          if (filenameMatch) fileContent = Buffer.from(content.trim(), 'binary');
+          if (filenameMatch) fileContent = Buffer.from(content, 'latin1');
         }
       }
 
-      if (!filePath && fileContent === null) {
+      if (!filePath || fileContent === null) {
         return json(res, 400, { error: 'Missing file or path' }, req);
       }
 
@@ -518,8 +536,8 @@ const server = createServer(async (req, res) => {
   }
 
   // ── Serve static frontend assets ──────────────────────────────────────
-  let staticPath = join(STATIC_DIR, url.pathname === '/' ? 'index.html' : url.pathname);
-  if (serveStatic(res, staticPath)) return;
+  let staticPath = resolveStaticPath(url.pathname === '/' ? '/index.html' : url.pathname);
+  if (staticPath && serveStatic(res, staticPath)) return;
 
   staticPath = join(STATIC_DIR, 'index.html');
   if (serveStatic(res, staticPath)) return;

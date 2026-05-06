@@ -267,8 +267,8 @@ function getSelectedAgent() {
  * @param {string} [path] - Directory path relative to working directory (empty for root).
  * @returns {Promise<{id: string, name: string, type: string, children: Array}|Array>}
  */
-export async function listFiles(path = '') {
-  const selected = getSelectedAgent();
+export async function listFiles(path = '', url = getSelectedAgent()) {
+  const selected = url;
   if (selected === E2B_AGENT_ID) {
     return listE2bFiles(path);
   }
@@ -335,8 +335,8 @@ export async function downloadFile(path) {
  * @param {string} path - Path relative to working directory
  * @returns {Promise<string>}
  */
-export async function readFileText(path) {
-  const selected = getSelectedAgent();
+export async function readFileText(path, url = getSelectedAgent()) {
+  const selected = url;
   if (selected === E2B_AGENT_ID) {
     return readE2bFileText(path);
   }
@@ -351,8 +351,8 @@ export async function readFileText(path) {
  * @param {string} content - File content
  * @returns {Promise<void>}
  */
-export async function writeFile(path, content) {
-  const selected = getSelectedAgent();
+export async function writeFile(path, content, url = getSelectedAgent()) {
+  const selected = url;
   if (selected === E2B_AGENT_ID) {
     return writeE2bFileText(path, content);
   }

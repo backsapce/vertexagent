@@ -1,7 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { lazy, Suspense, useState, useCallback, useEffect, useRef } from 'react';
 import ChatList from './components/ChatList/ChatList';
 import MessagePanel from './components/MessagePanel/MessagePanel';
-import FileManage from './components/FileManage/FileManage';
 import { loadChats, saveChats, clearAll, deleteChat as deleteChatFile } from './vfs/opfs';
 import config from './config/config';
 import llm from './models/llm';
@@ -14,6 +13,8 @@ import { useI18n } from './i18n/context';
 import { WifiOff, ChevronRight } from './components/Icons/Icons';
 import { useSyncInterceptor } from './sync/useSyncInterceptor';
 import './App.css';
+
+const FileManage = lazy(() => import('./components/FileManage/FileManage'));
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -201,7 +202,6 @@ function App() {
     const agentId = chat?.agentId;
     if (agentId) {
       setLastAgentId(agentId);
-      selectedAgentRef.current = agentId;
     }
   }, [chats]);
 
@@ -309,11 +309,13 @@ function App() {
       const activeConfig = llm.getActiveConfig();
 
       const chatAgentId = opts.agentId ?? chatAgents[chatId] ?? null;
+      const sandboxUrl = selectedAgentRef.current;
+      const hasToolContext = sandboxUrl || chatAgentId;
 
       const result = await runAgentLoop({
         messages: chatMessages,
-        systemPrompt: selectedAgentRef.current ? AGENT_SYSTEM_PROMPT : '',
-        agentUrl: selectedAgentRef.current,
+        systemPrompt: hasToolContext ? AGENT_SYSTEM_PROMPT : '',
+        agentUrl: sandboxUrl,
         agentId: chatAgentId,
         signal: controller.signal,
         provider: activeConfig.provider,
@@ -591,20 +593,23 @@ function App() {
           );
           if (newAgentId) {
             setLastAgentId(newAgentId);
-            selectedAgentRef.current = newAgentId;
           }
         }}
         onAgentListChange={async (newList) => {
           setAgentList(newList);
         }}
       />
-      <FileManage
-        show={showFileManage}
-        onClose={() => setShowFileManage(false)}
-        refreshTrigger={chats.length}
-        width={fileManageWidth}
-        onWidthChange={setFileManageWidth}
-      />
+      {showFileManage && (
+        <Suspense fallback={null}>
+          <FileManage
+            show={showFileManage}
+            onClose={() => setShowFileManage(false)}
+            refreshTrigger={chats.length}
+            width={fileManageWidth}
+            onWidthChange={setFileManageWidth}
+          />
+        </Suspense>
+      )}
     </div>
     </I18nProvider>
   );

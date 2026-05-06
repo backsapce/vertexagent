@@ -10,6 +10,25 @@
   height: 100dvh;
   width: 100vw;
   overflow: hidden;
+  position: relative;
+  isolation: isolate;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 10%, transparent), transparent 32%),
+    linear-gradient(180deg, var(--color-bg), color-mix(in srgb, var(--color-surface-deep) 72%, var(--color-bg)));
+}
+
+.app::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--color-border) 32%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--color-border) 24%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent 60%);
+  opacity: 0.28;
 }
 
 /* Offline banner */
@@ -24,7 +43,7 @@
   justify-content: center;
   gap: 8px;
   padding: 6px 16px;
-  background: var(--color-warning-bg, #fff3cd);
+  background: color-mix(in srgb, var(--color-warning-bg, #fff3cd) 86%, var(--color-surface));
   color: var(--color-warning-text, #856404);
   font-size: 13px;
   font-weight: 500;
@@ -61,7 +80,7 @@
   justify-content: center;
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s, color 0.2s;
-  box-shadow: 2px 0 6px var(--color-shadow);
+  box-shadow: 2px 0 14px var(--color-shadow-soft);
 }
 
 .chat-list-expand-btn:hover {
@@ -74,5 +93,10 @@
 @media (max-width: 768px) {
   .chat-list-expand-btn {
     display: none;
+  }
+
+  .app::before {
+    background-size: 32px 32px;
+    opacity: 0.18;
   }
 }

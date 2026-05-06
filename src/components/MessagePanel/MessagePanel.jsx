@@ -1,12 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
+import { lazy, Suspense, useState, useRef, useEffect } from 'react';
 import { useI18n } from '../../i18n/context';
-import Settings from '../Settings/Settings';
-import FileManage from '../FileManage/FileManage';
 import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud, User } from '../Icons/Icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import './MessagePanel.css';
+
+const Settings = lazy(() => import('../Settings/Settings'));
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4 MB target (well under 10 MB API limit)
 const MAX_DIMENSION = 2048;
@@ -321,24 +321,28 @@ const MessagePanel = ({
 
   return (
     <div className="message-panel">
-      <Settings
-        show={showSettings}
-        onClose={() => setShowSettings(false)}
-        llmConfig={llmConfig}
-        providers={providers}
-        onConfigureLLM={onConfigureLLM}
-        onFetchModels={onFetchModels}
-        theme={theme}
-        onThemeChange={onThemeChange}
-        agents={agents}
-        onAgentsChange={onAgentsChange}
-        onE2bChange={onE2bChange}
-        onFactoryReset={onFactoryReset}
-        nickname={nickname}
-        onNicknameChange={onNicknameChange}
-        agentList={agentList}
-        onAgentListChange={onAgentListChange}
-      />
+      {showSettings && (
+        <Suspense fallback={null}>
+          <Settings
+            show={showSettings}
+            onClose={() => setShowSettings(false)}
+            llmConfig={llmConfig}
+            providers={providers}
+            onConfigureLLM={onConfigureLLM}
+            onFetchModels={onFetchModels}
+            theme={theme}
+            onThemeChange={onThemeChange}
+            agents={agents}
+            onAgentsChange={onAgentsChange}
+            onE2bChange={onE2bChange}
+            onFactoryReset={onFactoryReset}
+            nickname={nickname}
+            onNicknameChange={onNicknameChange}
+            agentList={agentList}
+            onAgentListChange={onAgentListChange}
+          />
+        </Suspense>
+      )}
 
 
       {/* Header bar with settings and file manager */}

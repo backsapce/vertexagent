@@ -4,10 +4,12 @@ import react from '@vitejs/plugin-react'
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'fs'
 import { resolve, join, relative } from 'path'
 
+const { VITE_BASE } = process.env
+
 // GitHub Pages base path — set via VITE_BASE env var.
 //   VITE_BASE=/VertexAgent/ npm run build:pages → GitHub Pages
 //   npm run build                                  → normal (no prefix)
-const GH_PAGES_BASE = process.env.VITE_BASE || '/'
+const GH_PAGES_BASE = VITE_BASE || '/'
 
 /**
  * Vite plugin: generate service worker with precache manifest.

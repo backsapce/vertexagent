@@ -147,20 +147,20 @@
   height: 100%;
 }
 
-.file-editor-codemirror :global(.cm-editor) {
+.file-editor-codemirror .cm-editor {
   height: 100%;
   font-size: 14px;
 }
 
-.file-editor-codemirror :global(.cm-scroller) {
+.file-editor-codemirror .cm-scroller {
   overflow: auto;
 }
 
-.file-editor-codemirror :global(.cm-content) {
+.file-editor-codemirror .cm-content {
   padding: 8px 0;
 }
 
-.file-editor-codemirror :global(.cm-gutters) {
+.file-editor-codemirror .cm-gutters {
   background-color: #21252b;
   border-right: 1px solid #3e4451;
 }

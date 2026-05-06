@@ -11,6 +11,10 @@ const ROOT_DIR = 'vertex-agent';
 
 // ─── Core Helpers ─────────────────────────────────────────────────────────────
 
+function pathParts(path) {
+  return String(path || '').split('/').filter(Boolean);
+}
+
 /**
  * Get the root directory handle for the application.
  */
@@ -315,7 +319,7 @@ export async function saveFile(fileName, blob, dirName) {
   const dir = dirName === null
     ? await getRootDir()
     : dirName
-    ? await getDirectory(dirName)
+    ? await getDirectory(...pathParts(dirName))
     : await getDirectory('files');
   await writeText(dir, fileName, blob);
   notifySync();
@@ -358,7 +362,7 @@ export async function getFileBlob(fileName, category) {
       : category === 'files'
       ? await getDirectory('files')
       : category
-      ? await getDirectory(category)
+      ? await getDirectory(...pathParts(category))
       : await getDirectory('files');
 
   const fileHandle = await dir.getFileHandle(fileName);
@@ -372,7 +376,7 @@ export async function getFileBlob(fileName, category) {
  * @returns {Promise<void>}
  */
 export async function createFile(fileName, dirName) {
-  const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
+  const dir = dirName ? await getDirectory(...pathParts(dirName)) : await getRootDir();
   await writeText(dir, fileName, '');
   notifySync();
 }
@@ -384,7 +388,7 @@ export async function createFile(fileName, dirName) {
  * @returns {Promise<void>}
  */
 export async function createDirectory(dirName, parentDirName) {
-  const parentDir = parentDirName ? await getDirectory(...parentDirName.split('/')) : await getRootDir();
+  const parentDir = parentDirName ? await getDirectory(...pathParts(parentDirName)) : await getRootDir();
   await parentDir.getDirectoryHandle(dirName, { create: true });
   notifySync();
 }
@@ -396,7 +400,7 @@ export async function createDirectory(dirName, parentDirName) {
  * @returns {Promise<string>}
  */
 export async function readFileContent(fileName, dirName) {
-  const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
+  const dir = dirName ? await getDirectory(...pathParts(dirName)) : await getRootDir();
   const fileHandle = await dir.getFileHandle(fileName);
   const file = await fileHandle.getFile();
   return await file.text();
@@ -410,7 +414,7 @@ export async function readFileContent(fileName, dirName) {
  * @returns {Promise<void>}
  */
 export async function saveFileContent(fileName, content, dirName) {
-  const dir = dirName ? await getDirectory(...dirName.split('/')) : await getRootDir();
+  const dir = dirName ? await getDirectory(...pathParts(dirName)) : await getRootDir();
   await writeText(dir, fileName, content);
   notifySync();
 }
@@ -713,7 +717,7 @@ export async function deleteAgentSkillDir(agentId, skillName) {
 
 export async function listAgentFiles(agentId, path = '') {
   const dir = path
-    ? await getAgentDir(agentId, 'files', ...path.split('/').filter(Boolean))
+    ? await getAgentDir(agentId, 'files', ...pathParts(path))
     : await getAgentFilesDir(agentId);
   const children = [];
   for (const { name, kind } of await listEntries(dir)) {
@@ -739,7 +743,7 @@ export async function listAgentFiles(agentId, path = '') {
 }
 
 export async function readAgentFile(agentId, path) {
-  const parts = path.split('/');
+  const parts = pathParts(path);
   const fileName = parts.pop();
   const dir = parts.length > 0
     ? await getAgentDir(agentId, 'files', ...parts)
@@ -748,7 +752,7 @@ export async function readAgentFile(agentId, path) {
 }
 
 export async function writeAgentFile(agentId, path, content) {
-  const parts = path.split('/');
+  const parts = pathParts(path);
   const fileName = parts.pop();
   const dir = parts.length > 0
     ? await getAgentDir(agentId, 'files', ...parts)
@@ -758,7 +762,7 @@ export async function writeAgentFile(agentId, path, content) {
 }
 
 export async function createAgentFile(agentId, path, isDirectory = false) {
-  const parts = path.split('/');
+  const parts = pathParts(path);
   const name = parts.pop();
   const dir = parts.length > 0
     ? await getAgentDir(agentId, 'files', ...parts)
@@ -772,7 +776,7 @@ export async function createAgentFile(agentId, path, isDirectory = false) {
 }
 
 export async function deleteAgentFile(agentId, path) {
-  const parts = path.split('/');
+  const parts = pathParts(path);
   const name = parts.pop();
   const dir = parts.length > 0
     ? await getAgentDir(agentId, 'files', ...parts)

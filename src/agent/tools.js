@@ -10,7 +10,10 @@
  *   const result = await registry.dispatch('my_tool', { arg: 'value' }, agentContext);
  */
 
-import { executeCommand } from '../models/agent';
+import { clearMemory, loadMemory, MEMORY_MAX, saveMemory, saveUser, USER_MAX } from './memory.js';
+import { createSkill, deleteSkill, getSkill, listSkills, updateSkill } from './skills.js';
+import { executeCommand, listFiles, readFileText, writeFile } from '../models/agent';
+import { listAgentFiles, loadFiles, readAgentFile, readFileContent, writeAgentFile } from '../vfs/opfs';
 
 // ─── Registry singleton ─────────────────────────────────────────────────────
 
@@ -110,12 +113,10 @@ registry.register({
     try {
       if (ctx?.agentId && !ctx?.agentUrl) {
         // Local browser mode: read from agent workspace
-        const { readAgentFile } = await import('../vfs/opfs');
         const content = await readAgentFile(ctx.agentId, path);
         return content ?? `File not found: ${path}`;
       }
       // Remote sandbox mode
-      const { readFileText } = await import('../models/agent');
       const content = await readFileText(path, ctx.agentUrl);
       return content;
     } catch (err) {
@@ -150,12 +151,10 @@ registry.register({
     try {
       if (ctx?.agentId && !ctx?.agentUrl) {
         // Local browser mode: write to agent workspace
-        const { writeAgentFile } = await import('../vfs/opfs');
         await writeAgentFile(ctx.agentId, path, content);
         return `Successfully wrote to ${path}`;
       }
       // Remote sandbox mode
-      const { writeFile } = await import('../models/agent');
       await writeFile(path, content, ctx.agentUrl);
       return `Successfully wrote to ${path}`;
     } catch (err) {
@@ -186,12 +185,10 @@ registry.register({
     try {
       if (ctx?.agentId && !ctx?.agentUrl) {
         // Local browser mode: list from agent workspace
-        const { listAgentFiles } = await import('../vfs/opfs');
         const result = await listAgentFiles(ctx.agentId, path);
         return formatFileTree(result, 0);
       }
       // Remote sandbox mode
-      const { listFiles } = await import('../models/agent');
       const result = await listFiles(path, ctx.agentUrl);
       return formatFileTree(result, 0);
     } catch (err) {
@@ -221,12 +218,10 @@ registry.register({
     try {
       if (ctx?.agentId) {
         // Agent workspace: list from agent's files dir
-        const { listAgentFiles } = await import('../vfs/opfs');
         const result = await listAgentFiles(ctx.agentId, path);
         return formatFileTree(result, 0);
       }
       // Fall back to global files dir
-      const { loadFiles } = await import('../vfs/opfs');
       const result = await loadFiles(path || undefined);
       return formatFileTree(result.children || result, 0);
     } catch (err) {
@@ -256,12 +251,10 @@ registry.register({
     try {
       if (ctx?.agentId) {
         // Agent workspace: read from agent's files dir
-        const { readAgentFile } = await import('../vfs/opfs');
         const content = await readAgentFile(ctx.agentId, path);
         return content ?? `File not found: ${path}`;
       }
       // Fall back to global files dir
-      const { readFileContent } = await import('../vfs/opfs');
       const parts = path.split('/');
       const fileName = parts.pop();
       const dirName = parts.length > 0 ? parts.join('/') : undefined;
@@ -299,9 +292,6 @@ registry.register({
     },
   },
   async handler({ content, type }, ctx) {
-    const { saveMemory, saveUser, MEMORY_MAX, USER_MAX } = await import(
-      './memory.js'
-    );
     try {
       const agentId = ctx?.agentId;
       if (type === 'user') {
@@ -335,7 +325,6 @@ registry.register({
     },
   },
   async handler({ type = 'both' }, ctx) {
-    const { loadMemory } = await import('./memory.js');
     const data = await loadMemory(ctx?.agentId);
     if (type === 'memory') return data.memory || 'MEMORY.md is empty.';
     if (type === 'user') return data.user || 'USER.md is empty.';
@@ -365,7 +354,6 @@ registry.register({
     },
   },
   async handler({ type = 'both' }, ctx) {
-    const { clearMemory } = await import('./memory.js');
     await clearMemory(type, ctx?.agentId);
     return `Cleared ${type === 'both' ? 'all memory' : type === 'memory' ? 'MEMORY.md' : 'USER.md'}.`;
   },
@@ -383,7 +371,6 @@ registry.register({
     },
   },
   async handler(_args, ctx) {
-    const { listSkills } = await import('./skills.js');
     const skills = await listSkills(ctx?.agentId);
     if (skills.length === 0)
       return 'No skills installed. Use the skill_manage tool to create one.';
@@ -411,7 +398,6 @@ registry.register({
     },
   },
   async handler({ name }, ctx) {
-    const { getSkill } = await import('./skills.js');
     const skill = await getSkill(name, ctx?.agentId);
     if (!skill) return `Skill "${name}" not found.`;
     return skill.content;
@@ -446,9 +432,6 @@ registry.register({
     },
   },
   async handler({ action, name, content }, ctx) {
-    const { createSkill, updateSkill, deleteSkill } = await import(
-      './skills.js'
-    );
     try {
       const agentId = ctx?.agentId;
       if (action === 'create') {

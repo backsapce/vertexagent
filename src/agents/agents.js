@@ -55,25 +55,6 @@ async function writeJSON(dirHandle, filename, data) {
 }
 
 /**
- * Recursively copy all entries from one directory to another.
- */
-async function copyDirContents(srcDir, destDir) {
-  for await (const [entryName, handle] of srcDir) {
-    if (handle.kind === 'directory') {
-      const subDest = await destDir.getDirectoryHandle(entryName, { create: true });
-      await copyDirContents(handle, subDest);
-    } else if (handle.kind === 'file') {
-      const file = await handle.getFile();
-      const content = await file.text();
-      const newFile = await destDir.getFileHandle(entryName, { create: true });
-      const writable = await newFile.createWritable();
-      await writable.write(content);
-      await writable.close();
-    }
-  }
-}
-
-/**
  * Get the workspace directory name for a given agent ID.
  * Uses the stable agent ID as the directory name (not the display name).
  * @param {string} agentId
