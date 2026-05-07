@@ -6,9 +6,9 @@ Hosted app: https://backsapce.github.io/VertexAgent/
 
 ## What It Does
 
-- Chat with OpenAI, Anthropic, Gemini, OpenRouter, Qwen, or a custom OpenAI-compatible API.
+- Start sessions with OpenAI, Anthropic, Gemini, OpenRouter, Qwen, or a custom OpenAI-compatible API.
 - Run an autonomous tool loop with native provider tool calling.
-- Persist chats, settings, memory, skills, and files locally in OPFS.
+- Persist sessions, settings, memory, skills, and files locally in OPFS.
 - Manage local browser files or files on a connected sandbox.
 - Optionally execute commands through E2B Cloud Sandbox or a self-hosted Agent Node.
 - Export/import browser data as a ZIP.
@@ -16,14 +16,13 @@ Hosted app: https://backsapce.github.io/VertexAgent/
 
 ## Privacy Model
 
-VertexAgent does not require an application backend for normal chat usage. API keys, chats, settings, memory, skills, and managed files are stored in your browser through OPFS.
+VertexAgent does not require an application backend for normal session usage. API keys, sessions, settings, memory, skills, and managed files are stored in your browser through OPFS.
 
 External services are contacted only when you configure them:
 
-- LLM provider APIs for chat/model requests.
+- LLM provider APIs for session/model requests.
 - E2B when an E2B API key is enabled.
 - A custom Agent Node when you add one.
-- WebDAV sync when sync is configured.
 
 ## Quick Start
 
@@ -74,7 +73,7 @@ API keys are saved locally in browser storage through the app config.
 
 ## Sandboxes
 
-Sandbox support is optional. VertexAgent works as a private browser chat app without any sandbox connected.
+Sandbox support is optional. VertexAgent works as a private browser session app without any sandbox connected.
 
 ### E2B Cloud
 
@@ -113,6 +112,20 @@ Agent Node environment variables:
 | `AGENT_PORT` | `3099` | HTTP port for `/agent` |
 | `AGENT_TOKEN_FILE` | `.agent-token` | File used to persist long-lived auth tokens |
 | `AGENT_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated CORS allowlist |
+| `AGENT_SHELL` | Windows: `%ComSpec%`; other platforms: Node default | Shell used to execute commands. Set to `powershell.exe` or `pwsh.exe` when you want PowerShell syntax. |
+
+PowerShell examples:
+
+```powershell
+$env:AGENT_SHELL = 'powershell.exe'
+npm run dev:agent
+```
+
+Use PowerShell command syntax in that mode, for example:
+
+```powershell
+Get-ChildItem -LiteralPath 'D:\code\Bili23-Downloader' -File | Select-Object -ExpandProperty FullName -First 100
+```
 
 ## Architecture
 
@@ -122,7 +135,6 @@ src/agent/           Agent loop, tools, context, memory, skills
 src/models/          LLM providers, settings, sandbox client
 src/vfs/opfs.js      OPFS virtual filesystem
 src/config/          YAML-backed browser config
-src/sync/            Optional WebDAV sync
 server/agent.js      Optional local/remote Agent Node
 public/sw.js         PWA service worker
 ```
@@ -130,11 +142,11 @@ public/sw.js         PWA service worker
 Core runtime flow:
 
 1. The user sends a message.
-2. `runAgentLoop()` builds context from chat history, memory, and skills.
+2. `runAgentLoop()` builds context from session history, memory, and skills.
 3. The selected provider streams model output and native tool calls.
 4. Tool calls are dispatched through the tool registry.
 5. Tool results are fed back to the model until the loop completes or reaches the round limit.
-6. Chat state is saved back to OPFS.
+6. Session state is saved back to OPFS.
 
 ## Data Storage
 
@@ -142,8 +154,8 @@ Browser data lives under the OPFS root:
 
 ```text
 vertex-agent/
-  chats.json
-  messages/
+  session.json
+  sessions/
   memory/
   skills/
   files/

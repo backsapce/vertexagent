@@ -15,7 +15,7 @@
  *   import { runAgentLoop } from './agent/loop';
  *
  *   const result = await runAgentLoop({
- *     messages: chatMessages,
+ *     messages: sessionMessages,
  *     systemPrompt: basePrompt,
  *     agentUrl: 'http://localhost:3099',
  *     onUpdate: ({ content, thinking, toolCalls }) => { ... },
@@ -36,10 +36,10 @@ import { getWorkspaceDirName } from '../agents/agents.js';
 const DEFAULT_MAX_ROUNDS = 10;
 
 /**
- * Run the agent loop for a chat.
+ * Run the agent loop for a session.
  *
  * @param {Object} opts
- * @param {Array} opts.messages - Current chat messages
+ * @param {Array} opts.messages - Current session messages
  * @param {string} opts.systemPrompt - Base system prompt
  * @param {string} [opts.agentUrl] - Agent server URL (null if no agent)
  * @param {string} [opts.agentId] - Agent workspace ID (for memory/file scoping)
@@ -48,6 +48,7 @@ const DEFAULT_MAX_ROUNDS = 10;
  * @param {number} [opts.maxRounds] - Max tool execution rounds (default 10)
  * @param {string} [opts.provider] - Provider id for context window estimation
  * @param {string} [opts.model] - Model id for accurate context window lookup
+ * @param {number} [opts.contextWindow] - Persisted model context window from profile metadata
  * @param {string} [opts.llmProfileId] - LLM profile id to use for this run
  * @returns {Promise<{ content: string, thinking: string, toolCalls: Array }>}
  */
@@ -73,7 +74,7 @@ export async function runAgentLoop(opts) {
   const agentIdentity = agentId ? await readAgentAgentsFile(agentId) : null;
 
   // Context window by provider + model (tokenlens with fallback)
-  const contextWindow = getContextWindow(opts.provider, opts.model);
+  const contextWindow = opts.contextWindow || getContextWindow(opts.provider, opts.model);
 
   // Track accumulated tool calls for this agent loop invocation
   const allToolCalls = {}; // id -> { id, name, status, result? }
@@ -220,22 +221,22 @@ async function streamAndCollect(apiMessages, systemPrompt, toolSchemas, opts) {
   let usage = null;
 
   try {
-    const chatOpts = {
+    const requestOpts = {
       signal: opts.signal,
       llmProfileId: opts.llmProfileId,
     };
 
     // Add tool schemas if available
     if (toolSchemas?.length) {
-      chatOpts.tools = toolSchemas;
+      requestOpts.tools = toolSchemas;
     }
 
     // Add system prompt
     if (systemPrompt) {
-      chatOpts.systemPrompt = systemPrompt;
+      requestOpts.systemPrompt = systemPrompt;
     }
 
-    for await (const chunk of llm.chat(apiMessages, chatOpts)) {
+    for await (const chunk of llm.streamSession(apiMessages, requestOpts)) {
       if (typeof chunk === 'string') {
         content += chunk;
         opts.onUpdate?.({ content, thinking, toolCalls: null });

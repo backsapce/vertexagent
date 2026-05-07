@@ -1,14 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { checkAgentAvailable, connectAgent } from '../../models/agent';
 import { exportToZip, importFromZip } from '../../vfs/opfs';
+import config from '../../config/config';
+import { pullSync, pushSync, syncNow, testSyncConnection } from '../../sync/syncManager';
 import { useI18n } from '../../i18n/context';
 import { SUPPORTED_LOCALES } from '../../i18n/locales';
-import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User, Cloud, Layers } from '../Icons/Icons';
+import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User, Cloud, Layers, Refresh, Upload, Download } from '../Icons/Icons';
 import { listAllSkills, setSkillEnabled } from '../../agent/skills';
 import { listAllTools, setToolEnabled } from '../../agent/tools';
 import { createAgent, deleteAgent, updateAgentName, updateAgentConfig, listAgents } from '../../agents/agents';
-import { saveSyncSettings, testSyncConnection, fullSyncToServer, fullSyncFromServer } from '../../sync/syncManager';
-import config from '../../config/config';
 import './Settings.css';
 
 const AVATAR_SIZE = 256;
@@ -58,8 +58,8 @@ const Settings = ({
   onAgentsChange,
   onE2bChange,
   onFactoryReset,
-  nickname,
-  onNicknameChange,
+  userNickname,
+  onUserNicknameChange,
   avatar,
   onAvatarChange,
   agentList = [],
@@ -75,11 +75,13 @@ const Settings = ({
     apiKey: '',
     baseUrl: '',
     model: '',
+    contextWindow: '',
   });
   const [modelList, setModelList] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(null);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [selectedModels, setSelectedModels] = useState([]);
   const [editingLlmId, setEditingLlmId] = useState(null);
   const modelComboRef = useRef(null);
   const [newAgentUrl, setNewAgentUrl] = useState('');
@@ -93,7 +95,7 @@ const Settings = ({
   const [dataMessage, setDataMessage] = useState(null);
   const [factoryResetting, setFactoryResetting] = useState(false);
   const zipInputRef = useRef(null);
-  const [localNickname, setLocalNickname] = useState(nickname || '');
+  const [localNickname, setLocalNickname] = useState(userNickname || '');
   const [localAvatar, setLocalAvatar] = useState(avatar || '');
   const [avatarError, setAvatarError] = useState(null);
   const avatarInputRef = useRef(null);
@@ -109,103 +111,25 @@ const Settings = ({
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState(null);
   const [editingAgentName, setEditingAgentName] = useState('');
-  const [syncUrl, setSyncUrl] = useState('');
-  const [syncUsername, setSyncUsername] = useState('');
-  const [syncPassword, setSyncPassword] = useState('');
-  const [syncMethod, setSyncMethod] = useState('webdav');
-  const [s3Endpoint, setS3Endpoint] = useState('');
-  const [s3Bucket, setS3Bucket] = useState('');
-  const [s3Region, setS3Region] = useState('');
-  const [s3AccessKeyId, setS3AccessKeyId] = useState('');
-  const [s3SecretAccessKey, setS3SecretAccessKey] = useState('');
-  const [s3SecretSaved, setS3SecretSaved] = useState(false);
-  const [s3Prefix, setS3Prefix] = useState('vertex-agent');
-  const [s3Addressing, setS3Addressing] = useState('auto');
-  const [syncEnabled, setSyncEnabled] = useState(false);
-  const [syncMode, setSyncMode] = useState('manual');
-  const [syncConnecting, setSyncConnecting] = useState(false);
-  const [syncConnectResult, setSyncConnectResult] = useState(null);
-  const [syncing, setSyncing] = useState(false);
+  const [syncForm, setSyncForm] = useState({
+    enabled: false,
+    providerPreset: 's3',
+    endpoint: '',
+    region: 'us-east-1',
+    bucket: '',
+    prefix: 'vertex-agent',
+    accessKeyId: '',
+    secretAccessKey: '',
+    forcePathStyle: false,
+    autoOnStart: false,
+    autoIntervalMinutes: '',
+  });
+  const [syncBusy, setSyncBusy] = useState(null);
   const [syncMessage, setSyncMessage] = useState(null);
-  const [syncLastSynced, setSyncLastSynced] = useState(null);
-  const [syncLastError, setSyncLastError] = useState(null);
 
   useEffect(() => {
     setAgentsTabList(agentList);
   }, [agentList]);
-
-  // Load sync settings when tab changes to sync
-  useEffect(() => {
-    if (settingsTab === 'sync') {
-      const cfg = config.get('sync') || {};
-      const s3Cfg = cfg.s3 || {};
-      setSyncUrl(cfg.url || '');
-      setSyncUsername(cfg.username || '');
-      setSyncPassword('');
-      setSyncMethod(cfg.method || cfg.provider || 'webdav');
-      setS3Endpoint(s3Cfg.endpoint || cfg.endpoint || '');
-      setS3Bucket(s3Cfg.bucket || cfg.bucket || '');
-      setS3Region(s3Cfg.region || cfg.region || '');
-      setS3AccessKeyId(s3Cfg.accessKeyId || cfg.accessKeyId || '');
-      setS3SecretAccessKey('');
-      setS3SecretSaved(Boolean(s3Cfg.secretAccessKey || cfg.secretAccessKey));
-      setS3Prefix(s3Cfg.prefix || cfg.prefix || 'vertex-agent');
-      setS3Addressing(
-        s3Cfg.forcePathStyle === true || cfg.forcePathStyle === true
-          ? 'path'
-          : s3Cfg.forcePathStyle === false || cfg.forcePathStyle === false
-            ? 'virtual'
-            : 'auto'
-      );
-      setSyncEnabled(cfg.enabled || false);
-      setSyncMode(cfg.mode || 'manual');
-      setSyncLastSynced(cfg.lastSynced || null);
-      setSyncLastError(cfg.lastError || null);
-      setSyncConnectResult(null);
-      setSyncMessage(null);
-    }
-  }, [settingsTab]);
-
-  const getSavedS3Secret = () => {
-    const cfg = config.get('sync') || {};
-    return cfg.s3?.secretAccessKey || cfg.secretAccessKey || '';
-  };
-
-  const getPendingSyncSettings = () => {
-    const savedS3Secret = getSavedS3Secret();
-    const forcePathStyle = s3Addressing === 'path'
-      ? true
-      : s3Addressing === 'virtual'
-        ? false
-        : undefined;
-
-    return {
-      enabled: syncEnabled,
-      mode: syncMode,
-      method: syncMethod,
-      url: syncUrl.replace(/\/+$/, ''),
-      username: syncUsername,
-      ...(syncPassword && { password: syncPassword }),
-      s3: {
-        endpoint: s3Endpoint.replace(/\/+$/, ''),
-        bucket: s3Bucket,
-        region: s3Region,
-        accessKeyId: s3AccessKeyId,
-        secretAccessKey: s3SecretAccessKey || savedS3Secret,
-        prefix: s3Prefix || 'vertex-agent',
-        ...(forcePathStyle !== undefined && { forcePathStyle }),
-      },
-      lastSynced: syncLastSynced,
-      lastError: syncLastError,
-    };
-  };
-
-  const isSyncConnectionReady = () => {
-    if (syncMethod === 's3') {
-      return Boolean(s3Endpoint && s3Bucket && s3AccessKeyId && (s3SecretAccessKey || s3SecretSaved || getSavedS3Secret()));
-    }
-    return Boolean(syncUrl && syncUsername && (syncPassword || config.get('sync.password')));
-  };
 
   // Load agents when tab changes to agents
   useEffect(() => {
@@ -307,9 +231,24 @@ const Settings = ({
   // Initialize form when opening
   useEffect(() => {
     if (!show) return;
-    setLocalNickname(nickname || '');
+    setLocalNickname(userNickname || '');
     setLocalAvatar(avatar || '');
     setAvatarError(null);
+    const savedSync = config.get('sync') || {};
+    setSyncForm({
+      enabled: Boolean(savedSync.enabled),
+      providerPreset: savedSync.providerPreset || 's3',
+      endpoint: savedSync.endpoint || '',
+      region: savedSync.region || 'us-east-1',
+      bucket: savedSync.bucket || '',
+      prefix: savedSync.prefix || 'vertex-agent',
+      accessKeyId: savedSync.accessKeyId || '',
+      secretAccessKey: '',
+      forcePathStyle: Boolean(savedSync.forcePathStyle),
+      autoOnStart: Boolean(savedSync.autoOnStart),
+      autoIntervalMinutes: savedSync.autoIntervalMinutes != null ? String(savedSync.autoIntervalMinutes) : '',
+    });
+    setSyncMessage(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show]);
 
@@ -339,7 +278,9 @@ const Settings = ({
         apiKey: '',
         baseUrl: selected.baseUrl || '',
         model: selected.model || '',
+        contextWindow: selected.contextWindow ? String(selected.contextWindow) : '',
       });
+      setSelectedModels(selected.model ? [selected.model] : []);
     }
     setModelList([]);
     setModelsError(null);
@@ -476,6 +417,7 @@ const Settings = ({
   const handleProviderChange = (e) => {
     const newProvider = e.target.value;
     setSettingsForm((f) => ({ ...f, provider: newProvider, model: '', baseUrl: '' }));
+    setSelectedModels([]);
     setModelList([]);
     setModelsError(null);
     const key = settingsForm.apiKey;
@@ -498,15 +440,49 @@ const Settings = ({
 
   const handleSaveSettings = async () => {
     if (!settingsForm.provider) return;
-    await onConfigureLLM({
-      id: editingLlmId || null,
-      name: settingsForm.name.trim() || undefined,
-      provider: settingsForm.provider,
-      ...(settingsForm.apiKey && { apiKey: settingsForm.apiKey }),
-      baseUrl: settingsForm.baseUrl || null,
-      model: settingsForm.model || null,
-    });
+    const manualModel = settingsForm.model.trim();
+    const modelIds = selectedModels.length > 0
+      ? selectedModels
+      : (manualModel ? [manualModel] : [null]);
+    const createMultiple = modelIds.length > 1;
+    const trimmedName = settingsForm.name.trim();
+    const contextWindowValue = Number(settingsForm.contextWindow);
+    const contextWindow = Number.isFinite(contextWindowValue) && contextWindowValue > 0
+      ? Math.floor(contextWindowValue)
+      : undefined;
+    const selectedProviderName = selectedProvider?.name || settingsForm.provider;
+    const currentAutoName = selectedLlmProfile?.model
+      ? `${selectedProviderName} / ${selectedLlmProfile.model}`
+      : selectedProviderName;
+    const baseName = trimmedName && trimmedName !== currentAutoName ? trimmedName : '';
+
+    for (const [index, modelId] of modelIds.entries()) {
+      await onConfigureLLM({
+        id: createMultiple
+          ? (index === 0 && editingLlmId ? editingLlmId : null)
+          : (editingLlmId || null),
+        name: baseName
+          ? (createMultiple && modelId ? `${baseName} / ${modelId}` : baseName)
+          : undefined,
+        provider: settingsForm.provider,
+        ...(settingsForm.apiKey && { apiKey: settingsForm.apiKey }),
+        ...(createMultiple && editingLlmId && !settingsForm.apiKey && { cloneApiKeyFrom: editingLlmId }),
+        baseUrl: settingsForm.baseUrl || null,
+        model: modelId,
+        contextWindow: contextWindow || null,
+      });
+    }
     onClose();
+  };
+
+  const toggleSelectedModel = (modelId) => {
+    setSelectedModels((prev) => {
+      const next = prev.includes(modelId)
+        ? prev.filter((id) => id !== modelId)
+        : [...prev, modelId];
+      setSettingsForm((f) => ({ ...f, model: next.join(', ') }));
+      return next;
+    });
   };
 
   const handleEditLlmProfile = (profileId) => {
@@ -520,7 +496,9 @@ const Settings = ({
       apiKey: '',
       baseUrl: profile.baseUrl || '',
       model: profile.model || '',
+      contextWindow: profile.contextWindow ? String(profile.contextWindow) : '',
     });
+    setSelectedModels(profile.model ? [profile.model] : []);
     setModelList([]);
     setModelsError(null);
     if (profile.provider && profile.hasApiKey) {
@@ -537,7 +515,9 @@ const Settings = ({
       apiKey: '',
       baseUrl: '',
       model: '',
+      contextWindow: '',
     });
+    setSelectedModels([]);
     setModelList([]);
     setModelsError(null);
   };
@@ -549,87 +529,46 @@ const Settings = ({
     if (next) handleEditLlmProfile(next.id);
   };
 
-  const handleTestSyncConnection = async () => {
-    setSyncConnecting(true);
-    setSyncConnectResult(null);
-    try {
-      const pendingSyncSettings = getPendingSyncSettings();
-      const savedS3Secret = getSavedS3Secret();
-      await testSyncConnection(
-        pendingSyncSettings.url,
-        pendingSyncSettings.username,
-        syncMethod === 's3' ? (s3SecretAccessKey || savedS3Secret) : (syncPassword || config.get('sync.password')),
-        pendingSyncSettings
-      );
-      setSyncConnectResult({ success: true });
-    } catch (err) {
-      setSyncConnectResult({ success: false, error: err.message });
-    } finally {
-      setSyncConnecting(false);
-    }
+  const syncConfigFromForm = () => {
+    const saved = config.get('sync') || {};
+    const intervalText = String(syncForm.autoIntervalMinutes).trim();
+    const interval = Number(intervalText);
+    return {
+      ...saved,
+      enabled: Boolean(syncForm.enabled),
+      providerPreset: syncForm.providerPreset || 's3',
+      endpoint: syncForm.endpoint.trim() || null,
+      region: syncForm.region.trim() || 'us-east-1',
+      bucket: syncForm.bucket.trim(),
+      prefix: syncForm.prefix.trim() || 'vertex-agent',
+      accessKeyId: syncForm.accessKeyId.trim(),
+      secretAccessKey: syncForm.secretAccessKey || saved.secretAccessKey || '',
+      forcePathStyle: Boolean(syncForm.forcePathStyle),
+      autoOnStart: Boolean(syncForm.autoOnStart),
+      autoIntervalMinutes: intervalText && Number.isFinite(interval) && interval >= 0 ? Math.floor(interval) : null,
+    };
   };
 
   const handleSaveSync = async () => {
-    const pendingSyncSettings = getPendingSyncSettings();
-    await saveSyncSettings(pendingSyncSettings);
-    if (syncMethod === 's3' && pendingSyncSettings.s3.secretAccessKey) {
-      setS3SecretAccessKey('');
-      setS3SecretSaved(true);
-    }
-    setSyncMessage({ type: 'success', text: t('syncSettings.saved') });
+    const next = syncConfigFromForm();
+    await config.set('sync', next);
+    setSyncForm((form) => ({ ...form, secretAccessKey: '' }));
+    setSyncMessage({ type: 'success', text: t('syncSettings.saveSuccess') });
   };
 
-  const handleUploadToServer = async () => {
-    setSyncing(true);
+  const runSyncAction = async (action, fn) => {
+    setSyncBusy(action);
     setSyncMessage(null);
     try {
-      const pendingSyncSettings = getPendingSyncSettings();
-      const password = syncMethod === 's3' ? (s3SecretAccessKey || getSavedS3Secret()) : (syncPassword || config.get('sync.password'));
-      await fullSyncToServer(pendingSyncSettings.url, pendingSyncSettings.username, password, pendingSyncSettings);
-      const now = new Date().toISOString();
-      setSyncLastSynced(now);
-      await config.set('sync.lastSynced', now);
-      setSyncMessage({ type: 'success', text: t('syncSettings.uploadSuccess') });
-    } catch (err) {
-      setSyncMessage({ type: 'error', text: t('syncSettings.uploadFailed', { error: err.message }) });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handleDownloadFromServer = async () => {
-    setSyncing(true);
-    setSyncMessage(null);
-    try {
-      const pendingSyncSettings = getPendingSyncSettings();
-      const password = syncMethod === 's3' ? (s3SecretAccessKey || getSavedS3Secret()) : (syncPassword || config.get('sync.password'));
-      const result = await fullSyncFromServer(pendingSyncSettings.url, pendingSyncSettings.username, password, pendingSyncSettings);
+      const next = syncConfigFromForm();
+      await config.set('sync', next);
+      const result = await fn(next);
       await onStorageRestored?.();
-      setSyncMessage({ type: 'success', text: t('syncSettings.downloadSuccessWithCount', { count: result.downloaded ?? 0 }) });
+      setSyncMessage({ type: 'success', text: t(`syncSettings.${action}Success`, { summary: JSON.stringify(result) }) });
     } catch (err) {
-      setSyncMessage({ type: 'error', text: t('syncSettings.downloadFailed', { error: err.message }) });
+      setSyncMessage({ type: 'error', text: t('syncSettings.actionFailed', { error: err.message }) });
     } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handleEnableAutoSync = async () => {
-    setSyncing(true);
-    setSyncMessage(null);
-    try {
-      const pendingSyncSettings = { ...getPendingSyncSettings(), enabled: true, mode: 'auto' };
-      const password = syncMethod === 's3' ? (s3SecretAccessKey || getSavedS3Secret()) : (syncPassword || config.get('sync.password'));
-      await fullSyncToServer(pendingSyncSettings.url, pendingSyncSettings.username, password, pendingSyncSettings);
-      const now = new Date().toISOString();
-      await config.merge('sync', { ...pendingSyncSettings, enabled: true, mode: 'auto', lastSynced: now });
-      setSyncEnabled(true);
-      setSyncMode('auto');
-      setSyncLastSynced(now);
-      setSyncMessage({ type: 'success', text: t('syncSettings.autoSyncEnabled') });
-    } catch (err) {
-      setSyncMessage({ type: 'error', text: t('syncSettings.autoSyncFailed', { error: err.message }) });
-    } finally {
-      setSyncing(false);
+      setSyncBusy(null);
     }
   };
 
@@ -685,6 +624,13 @@ const Settings = ({
               {t('settings.data')}
             </button>
             <button
+              className={`settings-nav-item ${settingsTab === 'sync' ? 'active' : ''}`}
+              onClick={() => { setSettingsTab('sync'); setSyncMessage(null); }}
+            >
+              <Cloud width={16} height={16} />
+              {t('settings.sync')}
+            </button>
+            <button
               className={`settings-nav-item ${settingsTab === 'language' ? 'active' : ''}`}
               onClick={() => setSettingsTab('language')}
             >
@@ -714,13 +660,6 @@ const Settings = ({
             >
               <Plug width={16} height={16} />
               {t('settings.tools')}
-            </button>
-            <button
-              className={`settings-nav-item ${settingsTab === 'sync' ? 'active' : ''}`}
-              onClick={() => setSettingsTab('sync')}
-            >
-              <Cloud width={16} height={16} />
-              {t('settings.sync')}
             </button>
           </nav>
         </div>
@@ -820,6 +759,7 @@ const Settings = ({
                         placeholder={selectedProvider.defaultModel || t('llmSettings.modelPlaceholder', { fallback: 'Type or select a model' })}
                         onChange={(e) => {
                           setSettingsForm((f) => ({ ...f, model: e.target.value }));
+                          setSelectedModels([]);
                           setModelDropdownOpen(true);
                         }}
                         onFocus={() => setModelDropdownOpen(true)}
@@ -836,7 +776,7 @@ const Settings = ({
                       </button>
                       {modelDropdownOpen && (() => {
                         const allModels = modelList.length > 0 ? modelList : (selectedProvider.fallbackModels || []);
-                        const filter = settingsForm.model.toLowerCase();
+                        const filter = selectedModels.length > 0 ? '' : settingsForm.model.toLowerCase();
                         const filtered = filter
                           ? allModels.filter((m) => m.id.toLowerCase().includes(filter) || m.name.toLowerCase().includes(filter))
                           : allModels;
@@ -845,13 +785,20 @@ const Settings = ({
                             {filtered.map((m) => (
                               <li
                                 key={m.id}
-                                className={`model-combo-option${m.id === settingsForm.model ? ' selected' : ''}`}
+                                className={`model-combo-option${selectedModels.includes(m.id) || m.id === settingsForm.model ? ' selected' : ''}`}
                                 onMouseDown={(e) => {
                                   e.preventDefault();
-                                  setSettingsForm((f) => ({ ...f, model: m.id }));
-                                  setModelDropdownOpen(false);
+                                  toggleSelectedModel(m.id);
                                 }}
-                              >{m.name}</li>
+                              >
+                                <input
+                                  type="checkbox"
+                                  tabIndex={-1}
+                                  readOnly
+                                  checked={selectedModels.includes(m.id)}
+                                />
+                                <span>{m.name}</span>
+                              </li>
                             ))}
                           </ul>
                         ) : null;
@@ -862,6 +809,18 @@ const Settings = ({
                   {modelList.length === 0 && !modelsLoading && settingsForm.apiKey && (
                     <p className="settings-hint">{t('llmSettings.modelsHint')}</p>
                   )}
+
+                  <label>{t('llmSettings.contextWindow')}</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    placeholder={t('llmSettings.contextWindowPlaceholder')}
+                    value={settingsForm.contextWindow}
+                    onChange={(e) => setSettingsForm((f) => ({ ...f, contextWindow: e.target.value }))}
+                  />
+                  <p className="settings-hint">{t('llmSettings.contextWindowHint')}</p>
 
                   {!selectedProvider.requiresBaseUrl && (
                     <>
@@ -905,7 +864,7 @@ const Settings = ({
                   {localAvatar ? (
                     <img src={localAvatar} alt="" onError={() => setAvatarError(t('generalSettings.avatarLoadFailed'))} />
                   ) : (
-                    <span>{Array.from((localNickname.trim() || t('message.assistant')))[0]?.toUpperCase() || 'V'}</span>
+                    <span>{Array.from(t('message.assistant'))[0]?.toUpperCase() || 'V'}</span>
                   )}
                 </div>
                 <div className="avatar-actions">
@@ -936,7 +895,7 @@ const Settings = ({
                 <button
                   className="settings-save"
                   onClick={() => {
-                    onNicknameChange?.(localNickname);
+                    onUserNicknameChange?.(localNickname);
                     onAvatarChange?.(localAvatar);
                     onClose();
                   }}
@@ -1188,6 +1147,160 @@ const Settings = ({
                     {factoryResetting ? t('dataSettings.factoryResetting') : t('dataSettings.factoryReset')}
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+          {settingsTab === 'sync' && (
+            <div className="settings-section">
+              <h3>{t('syncSettings.title')}</h3>
+              <p className="settings-desc">{t('syncSettings.desc')}</p>
+
+              {syncMessage && (
+                <p className={`settings-${syncMessage.type === 'error' ? 'error' : 'success'}`}>{syncMessage.text}</p>
+              )}
+
+              <div className="sync-warning">
+                <AlertTriangle width={16} height={16} />
+                <span>{t('syncSettings.warning')}</span>
+              </div>
+
+              <label className="settings-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={syncForm.enabled}
+                  onChange={(e) => setSyncForm((f) => ({ ...f, enabled: e.target.checked }))}
+                />
+                <span>{t('syncSettings.enabled')}</span>
+              </label>
+
+              <label>{t('syncSettings.provider')}</label>
+              <select
+                value={syncForm.providerPreset}
+                onChange={(e) => {
+                  const preset = e.target.value;
+                  setSyncForm((f) => ({
+                    ...f,
+                    providerPreset: preset,
+                    forcePathStyle: preset === 'minio' ? true : f.forcePathStyle,
+                  }));
+                }}
+              >
+                <option value="s3">{t('syncSettings.providerS3')}</option>
+                <option value="aliyun-oss">{t('syncSettings.providerOss')}</option>
+                <option value="minio">{t('syncSettings.providerMinio')}</option>
+                <option value="custom">{t('syncSettings.providerCustom')}</option>
+              </select>
+
+              <div className="settings-two-col">
+                <label>
+                  {t('syncSettings.endpoint')}
+                  <input
+                    type="text"
+                    placeholder={t('syncSettings.endpointPlaceholder')}
+                    value={syncForm.endpoint}
+                    onChange={(e) => setSyncForm((f) => ({ ...f, endpoint: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  {t('syncSettings.region')}
+                  <input
+                    type="text"
+                    placeholder="us-east-1"
+                    value={syncForm.region}
+                    onChange={(e) => setSyncForm((f) => ({ ...f, region: e.target.value }))}
+                  />
+                </label>
+              </div>
+
+              <label>{t('syncSettings.bucket')}</label>
+              <input
+                type="text"
+                placeholder={t('syncSettings.bucketPlaceholder')}
+                value={syncForm.bucket}
+                onChange={(e) => setSyncForm((f) => ({ ...f, bucket: e.target.value }))}
+              />
+
+              <label>{t('syncSettings.prefix')}</label>
+              <input
+                type="text"
+                placeholder="vertex-agent"
+                value={syncForm.prefix}
+                onChange={(e) => setSyncForm((f) => ({ ...f, prefix: e.target.value }))}
+              />
+
+              <div className="settings-two-col">
+                <label>
+                  {t('syncSettings.accessKeyId')}
+                  <input
+                    type="text"
+                    value={syncForm.accessKeyId}
+                    onChange={(e) => setSyncForm((f) => ({ ...f, accessKeyId: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  {t('syncSettings.secretAccessKey')}
+                  <input
+                    type="password"
+                    placeholder={config.get('sync.secretAccessKey') ? t('syncSettings.secretSaved') : ''}
+                    value={syncForm.secretAccessKey}
+                    onChange={(e) => setSyncForm((f) => ({ ...f, secretAccessKey: e.target.value }))}
+                  />
+                </label>
+              </div>
+
+              <label className="settings-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={syncForm.forcePathStyle}
+                  onChange={(e) => setSyncForm((f) => ({ ...f, forcePathStyle: e.target.checked }))}
+                />
+                <span>{t('syncSettings.forcePathStyle')}</span>
+              </label>
+
+              <div className="settings-two-col">
+                <label className="settings-checkbox-row inline">
+                  <input
+                    type="checkbox"
+                    checked={syncForm.autoOnStart}
+                    onChange={(e) => setSyncForm((f) => ({ ...f, autoOnStart: e.target.checked }))}
+                  />
+                  <span>{t('syncSettings.autoOnStart')}</span>
+                </label>
+                <label>
+                  {t('syncSettings.autoInterval')}
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder={t('syncSettings.autoIntervalPlaceholder')}
+                    value={syncForm.autoIntervalMinutes}
+                    onChange={(e) => setSyncForm((f) => ({ ...f, autoIntervalMinutes: e.target.value }))}
+                  />
+                </label>
+              </div>
+
+              <div className="sync-actions">
+                <button className="settings-secondary" disabled={Boolean(syncBusy)} onClick={() => runSyncAction('test', testSyncConnection)}>
+                  <Plug width={16} height={16} />
+                  {syncBusy === 'test' ? t('syncSettings.working') : t('syncSettings.test')}
+                </button>
+                <button className="settings-secondary" disabled={Boolean(syncBusy)} onClick={() => runSyncAction('pull', pullSync)}>
+                  <Download width={16} height={16} />
+                  {syncBusy === 'pull' ? t('syncSettings.working') : t('syncSettings.pull')}
+                </button>
+                <button className="settings-secondary" disabled={Boolean(syncBusy)} onClick={() => runSyncAction('push', pushSync)}>
+                  <Upload width={16} height={16} />
+                  {syncBusy === 'push' ? t('syncSettings.working') : t('syncSettings.push')}
+                </button>
+                <button className="settings-secondary" disabled={Boolean(syncBusy)} onClick={() => runSyncAction('sync', syncNow)}>
+                  <Refresh width={16} height={16} />
+                  {syncBusy === 'sync' ? t('syncSettings.working') : t('syncSettings.syncNow')}
+                </button>
+              </div>
+
+              <div className="settings-actions">
+                <button className="settings-cancel" onClick={onClose}>{t('settings.cancel')}</button>
+                <button className="settings-save" onClick={handleSaveSync}>{t('settings.save')}</button>
               </div>
             </div>
           )}
@@ -1447,241 +1560,6 @@ const Settings = ({
                   </div>
                 </>
               )}
-            </div>
-          )}
-          {settingsTab === 'sync' && (
-            <div className="settings-section">
-              <h3>{t('syncSettings.title')}</h3>
-              <p className="settings-desc">{t('syncSettings.desc')}</p>
-
-              {syncMessage && (
-                <p className={`settings-${syncMessage.type === 'error' ? 'error' : 'success'}`}>{syncMessage.text}</p>
-              )}
-
-              <label className="sync-toggle-label">
-                <span>{t('syncSettings.enableSync')}</span>
-                <input
-                  type="checkbox"
-                  checked={syncEnabled}
-                  onChange={(e) => setSyncEnabled(e.target.checked)}
-                />
-                <span className="sync-toggle-slider"></span>
-              </label>
-
-              <label>{t('syncSettings.method')}</label>
-              <select
-                value={syncMethod}
-                onChange={(e) => {
-                  setSyncMethod(e.target.value);
-                  setSyncConnectResult(null);
-                }}
-                disabled={!syncEnabled}
-              >
-                <option value="webdav">{t('syncSettings.methodWebdav')}</option>
-                <option value="s3">{t('syncSettings.methodS3')}</option>
-              </select>
-              <p className="settings-hint">{t('syncSettings.methodHint')}</p>
-
-              {syncMethod === 'webdav' && (
-                <>
-                  <label>{t('syncSettings.serverUrl')}</label>
-                  <input
-                    type="text"
-                    placeholder={t('syncSettings.serverUrlPlaceholder')}
-                    value={syncUrl}
-                    onChange={(e) => setSyncUrl(e.target.value)}
-                    disabled={!syncEnabled}
-                  />
-                  <p className="settings-hint">{t('syncSettings.serverUrlHint')}</p>
-
-                  <label>{t('syncSettings.username')}</label>
-                  <input
-                    type="text"
-                    placeholder={t('syncSettings.usernamePlaceholder')}
-                    value={syncUsername}
-                    onChange={(e) => setSyncUsername(e.target.value)}
-                    disabled={!syncEnabled}
-                  />
-
-                  <label>{t('syncSettings.password')}</label>
-                  <input
-                    type="password"
-                    placeholder={t('syncSettings.passwordPlaceholder')}
-                    value={syncPassword}
-                    onChange={(e) => setSyncPassword(e.target.value)}
-                    disabled={!syncEnabled}
-                  />
-                  {config.get('sync.password') && !syncPassword && (
-                    <p className="settings-hint">{t('syncSettings.passwordSaved')}</p>
-                  )}
-                </>
-              )}
-
-              {syncMethod === 's3' && (
-                <>
-                  <label>{t('syncSettings.s3Endpoint')}</label>
-                  <input
-                    type="text"
-                    placeholder={t('syncSettings.s3EndpointPlaceholder')}
-                    value={s3Endpoint}
-                    onChange={(e) => setS3Endpoint(e.target.value)}
-                    disabled={!syncEnabled}
-                  />
-                  <p className="settings-hint">{t('syncSettings.s3EndpointHint')}</p>
-
-                  <div className="sync-grid">
-                    <div>
-                      <label>{t('syncSettings.s3Bucket')}</label>
-                      <input
-                        type="text"
-                        placeholder={t('syncSettings.s3BucketPlaceholder')}
-                        value={s3Bucket}
-                        onChange={(e) => setS3Bucket(e.target.value)}
-                        disabled={!syncEnabled}
-                      />
-                    </div>
-                    <div>
-                      <label>{t('syncSettings.s3Region')}</label>
-                      <input
-                        type="text"
-                        placeholder={t('syncSettings.s3RegionPlaceholder')}
-                        value={s3Region}
-                        onChange={(e) => setS3Region(e.target.value)}
-                        disabled={!syncEnabled}
-                      />
-                    </div>
-                  </div>
-
-                  <label>{t('syncSettings.s3AccessKeyId')}</label>
-                  <input
-                    type="text"
-                    placeholder={t('syncSettings.s3AccessKeyIdPlaceholder')}
-                    value={s3AccessKeyId}
-                    onChange={(e) => setS3AccessKeyId(e.target.value)}
-                    disabled={!syncEnabled}
-                  />
-
-                  <label>{t('syncSettings.s3SecretAccessKey')}</label>
-                  <input
-                    type="password"
-                    placeholder={t('syncSettings.s3SecretAccessKeyPlaceholder')}
-                    value={s3SecretAccessKey}
-                    onChange={(e) => setS3SecretAccessKey(e.target.value)}
-                    disabled={!syncEnabled}
-                  />
-                  {(s3SecretSaved || getSavedS3Secret()) && !s3SecretAccessKey && (
-                    <p className="settings-hint">{t('syncSettings.s3SecretSaved')}</p>
-                  )}
-
-                  <div className="sync-grid">
-                    <div>
-                      <label>{t('syncSettings.s3Prefix')}</label>
-                      <input
-                        type="text"
-                        placeholder={t('syncSettings.s3PrefixPlaceholder')}
-                        value={s3Prefix}
-                        onChange={(e) => setS3Prefix(e.target.value)}
-                        disabled={!syncEnabled}
-                      />
-                    </div>
-                    <div>
-                      <label>{t('syncSettings.s3Addressing')}</label>
-                      <select
-                        value={s3Addressing}
-                        onChange={(e) => setS3Addressing(e.target.value)}
-                        disabled={!syncEnabled}
-                      >
-                        <option value="auto">{t('syncSettings.s3AddressingAuto')}</option>
-                        <option value="virtual">{t('syncSettings.s3AddressingVirtual')}</option>
-                        <option value="path">{t('syncSettings.s3AddressingPath')}</option>
-                      </select>
-                    </div>
-                  </div>
-                  <p className="settings-hint">{t('syncSettings.s3AddressingHint')}</p>
-                </>
-              )}
-
-              <div className="sync-test-row">
-                <button
-                  className="sync-test-btn"
-                  disabled={syncConnecting || !isSyncConnectionReady()}
-                  onClick={handleTestSyncConnection}
-                >
-                  {syncConnecting ? t('syncSettings.testing') : t('syncSettings.testConnection')}
-                </button>
-                {syncConnectResult && (
-                  <span className={`sync-test-result ${syncConnectResult.success ? 'success' : 'error'}`}>
-                    {syncConnectResult.success ? t('syncSettings.testSuccess') : syncConnectResult.error}
-                  </span>
-                )}
-              </div>
-
-              <label>{t('syncSettings.syncMode')}</label>
-              <label className="sync-mode-toggle-label">
-                <span className="sync-mode-text">{syncMode === 'auto' ? t('syncSettings.autoMode') : t('syncSettings.manualMode')}</span>
-                <input
-                  type="checkbox"
-                  checked={syncMode === 'auto'}
-                  onChange={(e) => setSyncMode(e.target.checked ? 'auto' : 'manual')}
-                />
-                <span className="sync-mode-toggle-slider"></span>
-              </label>
-
-              {syncMode === 'auto' && !syncEnabled && (
-                <p className="settings-hint">{t('syncSettings.autoRequiresEnabled')}</p>
-              )}
-
-              {syncMode === 'manual' && syncEnabled && (
-                <div className="sync-actions">
-                  <div className="sync-action-card">
-                    <div className="sync-action-icon"><UploadCloud width={24} height={24} /></div>
-                    <div className="sync-action-info">
-                      <span className="sync-action-title">{t('syncSettings.uploadTitle')}</span>
-                      <span className="sync-action-desc">{t('syncSettings.uploadDesc')}</span>
-                  </div>
-                    <button className="sync-action-btn" disabled={syncing || !isSyncConnectionReady()} onClick={handleUploadToServer}>
-                      {syncing ? t('syncSettings.syncing') : t('syncSettings.upload')}
-                    </button>
-                  </div>
-                  <div className="sync-action-card">
-                    <div className="sync-action-icon"><DownloadCloud width={24} height={24} /></div>
-                    <div className="sync-action-info">
-                      <span className="sync-action-title">{t('syncSettings.downloadTitle')}</span>
-                      <span className="sync-action-desc">{t('syncSettings.downloadDesc')}</span>
-                  </div>
-                    <button className="sync-action-btn" disabled={syncing || !isSyncConnectionReady()} onClick={handleDownloadFromServer}>
-                      {syncing ? t('syncSettings.syncing') : t('syncSettings.download')}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {syncMode === 'auto' && syncEnabled && (
-                <div className="sync-auto-row">
-                  <button
-                    className="sync-auto-btn"
-                    disabled={syncing || !isSyncConnectionReady()}
-                    onClick={handleEnableAutoSync}
-                  >
-                    {syncing ? t('syncSettings.syncing') : t('syncSettings.enableAutoSync')}
-                  </button>
-                  <p className="settings-hint">{t('syncSettings.autoSyncHint')}</p>
-                </div>
-              )}
-
-              {syncLastSynced && (
-                <p className="sync-status">
-                  {t('syncSettings.lastSynced')}: {new Date(syncLastSynced).toLocaleString()}
-                </p>
-              )}
-              {syncLastError && (
-                <p className="settings-error">{t('syncSettings.lastError', { error: syncLastError })}</p>
-              )}
-
-              <div className="settings-actions">
-                <button className="settings-cancel" onClick={onClose}>{t('settings.cancel')}</button>
-                <button className="settings-save" onClick={handleSaveSync}>{t('settings.save')}</button>
-              </div>
             </div>
           )}
         </div>

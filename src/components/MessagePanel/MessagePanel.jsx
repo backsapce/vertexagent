@@ -1,7 +1,7 @@
 import { forwardRef, lazy, Suspense, useImperativeHandle, useState, useRef, useEffect, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
 import { getAgentDir } from '../../vfs/opfs';
-import { ChevronRight, Settings as SettingsIcon, Folder, File, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud, User } from '../Icons/Icons';
+import { ChevronRight, Settings as SettingsIcon, Folder, File, FileEdit, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud, User } from '../Icons/Icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
@@ -11,6 +11,8 @@ const Settings = lazy(() => import('../Settings/Settings'));
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4 MB target (well under 10 MB API limit)
 const MAX_DIMENSION = 2048;
+const AUTO_SCROLL_BOTTOM_THRESHOLD = 48;
+const SCROLL_DIRECTION_EPSILON = 2;
 
 function getMentionRange(value, caret) {
   const head = value.slice(0, caret);
@@ -123,37 +125,23 @@ function compressImage(file) {
   });
 }
 
-/** Rough token estimate: ~4 chars per token */
-function estimateTokens(messages) {
-  let chars = 0;
-  for (const m of messages) {
-    if (m.content) chars += m.content.length;
-    if (m.thinking) chars += m.thinking.length;
-    if (m.images?.length) chars += m.images.length * 1000; // ~1k tokens per image
-  }
-  return Math.ceil(chars / 4);
-}
-
-const DEFAULT_CONTEXT_WINDOW = 128000; // 128k tokens default
-
-const ContextBudget = ({ messages }) => {
+const ContextBudget = ({ messages, llmConfig }) => {
   // Check if the last assistant message has real usage data from the API
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && m.usage);
-  const estimated = estimateTokens(messages);
+  const contextWindow = Number(llmConfig?.contextWindow);
+  const total = Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : null;
 
-  let used, total, ratio, tooltip;
-  if (lastAssistant?.usage) {
+  let used = null;
+  if (total && lastAssistant?.usage) {
     const u = lastAssistant.usage;
-    used = u.total_tokens || (u.prompt_tokens || 0) + (u.completion_tokens || u.output_tokens || 0);
-    total = u.content_len || DEFAULT_CONTEXT_WINDOW;
-    ratio = Math.min(used / total, 1);
-    tooltip = `${formatTokens(used)} / ${formatTokens(total)}`;
-  } else {
-    used = estimated;
-    total = DEFAULT_CONTEXT_WINDOW;
-    ratio = Math.min(used / total, 1);
-    tooltip = `~${formatTokens(used)} / ${formatTokens(total)} (estimated)`;
+    used = u.total_tokens
+      || (u.prompt_tokens || 0) + (u.completion_tokens || u.output_tokens || 0)
+      || (u.input_tokens || 0) + (u.output_tokens || 0);
   }
+  const ratio = total && used ? Math.min(used / total, 1) : 0;
+  const tooltip = total
+    ? `${used != null ? formatTokens(used) : '0'} / ${formatTokens(total)}`
+    : 'Context window not configured';
 
   const percent = Math.round(ratio * 100);
 
@@ -291,6 +279,9 @@ const ToolBlock = ({ toolCall }) => {
 const MessagePanel = forwardRef(({
   messages,
   onSendMessage,
+  queuedMessages = [],
+  onRemoveQueuedMessage,
+  onEditMessage,
   onRetry,
   streaming,
   onStopStreaming,
@@ -312,19 +303,21 @@ const MessagePanel = forwardRef(({
   onFactoryReset,
   showFileManage,
   onToggleFileManage,
-  nickname,
-  onNicknameChange,
+  userNickname,
+  onUserNicknameChange,
   avatar,
   onAvatarChange,
   agentList,
   agentId,
   onAgentChange,
   onAgentListChange,
-  activeChatId,
+  activeSessionId,
   onStorageRestored,
 }, ref) => {
   const { t } = useI18n();
   const [input, setInput] = useState('');
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editingText, setEditingText] = useState('');
   const [pendingImages, setPendingImages] = useState([]); // [{dataUrl, name}]
   const [pendingContextFiles, setPendingContextFiles] = useState([]);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -335,12 +328,21 @@ const MessagePanel = forwardRef(({
   const [mentionError, setMentionError] = useState('');
   const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
-  const messagesEndRef = useRef(null);
+  const messageListRef = useRef(null);
+  const shouldAutoScrollRef = useRef(true);
+  const scrollRafRef = useRef(null);
+  const lastScrollTopRef = useRef(0);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
-  const assistantName = nickname?.trim() || t('message.assistant');
-  const assistantInitial = Array.from(assistantName)[0]?.toUpperCase() || 'V';
   const selectedAgent = agentList.find((agent) => agent.id === agentId) || agentList[0];
+  const userName = userNickname?.trim() || t('message.you');
+  const userInitial = Array.from(userName)[0]?.toUpperCase() || 'U';
+  const assistantName = selectedAgent?.name || t('message.assistant');
+  const assistantInitial = Array.from(assistantName)[0]?.toUpperCase() || 'V';
+  const selectedLlmProfile = llmProfiles?.find((profile) => profile.id === activeLlmProfileId) || llmProfiles?.[0];
+  const selectedProvider = providers?.find((provider) => provider.id === selectedLlmProfile?.provider);
+  const selectedLlmProviderLabel = selectedProvider?.name || selectedLlmProfile?.provider || t('message.noProviderConfigured');
+  const selectedLlmModelLabel = selectedLlmProfile?.model || selectedLlmProfile?.name || '';
 
   useImperativeHandle(ref, () => ({
     focusInput() {
@@ -349,8 +351,46 @@ const MessagePanel = forwardRef(({
   }), []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!shouldAutoScrollRef.current) return;
+    if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      const list = messageListRef.current;
+      if (list) {
+        list.scrollTop = list.scrollHeight;
+        lastScrollTopRef.current = list.scrollTop;
+      }
+      scrollRafRef.current = null;
+    });
   }, [messages]);
+
+  useEffect(() => {
+    shouldAutoScrollRef.current = true;
+    if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      const list = messageListRef.current;
+      if (list) {
+        list.scrollTop = list.scrollHeight;
+        lastScrollTopRef.current = list.scrollTop;
+      }
+      scrollRafRef.current = null;
+    });
+  }, [activeSessionId]);
+
+  useEffect(() => () => {
+    if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
+  }, []);
+
+  const handleMessageListScroll = (e) => {
+    const list = e.currentTarget;
+    const isScrollingUp = list.scrollTop < lastScrollTopRef.current - SCROLL_DIRECTION_EPSILON;
+    const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
+    if (isScrollingUp) {
+      shouldAutoScrollRef.current = false;
+    } else if (distanceFromBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD) {
+      shouldAutoScrollRef.current = true;
+    }
+    lastScrollTopRef.current = list.scrollTop;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -399,7 +439,7 @@ const MessagePanel = forwardRef(({
 
   const handleSend = () => {
     const text = input.trim();
-    if ((!text && pendingImages.length === 0 && pendingContextFiles.length === 0) || streaming) return;
+    if (!text && pendingImages.length === 0 && pendingContextFiles.length === 0) return;
     onSendMessage(
       buildDisplayMessageWithFileRefs(text, pendingContextFiles),
       pendingImages.length > 0 ? pendingImages : undefined,
@@ -412,6 +452,58 @@ const MessagePanel = forwardRef(({
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+  };
+
+  const startEditMessage = (msg) => {
+    if (streaming || msg.role !== 'user') return;
+    setEditingMessageId(msg.id);
+    setEditingText(msg.content || '');
+  };
+
+  const cancelEditMessage = () => {
+    setEditingMessageId(null);
+    setEditingText('');
+  };
+
+  const submitEditMessage = () => {
+    const text = editingText.trim();
+    if (!text || streaming || !editingMessageId) return;
+    onEditMessage?.(editingMessageId, text);
+    cancelEditMessage();
+  };
+
+  const handleEditKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEditMessage();
+      return;
+    }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      const ta = e.target;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const val = ta.value;
+      const newVal = val.substring(0, start) + '\n' + val.substring(end);
+      setEditingText(newVal);
+      requestAnimationFrame(() => {
+        ta.selectionStart = ta.selectionEnd = start + 1;
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 180) + 'px';
+      });
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitEditMessage();
+    }
+  };
+
+  const handleEditTextChange = (e) => {
+    const ta = e.target;
+    setEditingText(ta.value);
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 180) + 'px';
   };
 
   const handleImageUpload = (e) => {
@@ -549,8 +641,8 @@ const MessagePanel = forwardRef(({
             onAgentsChange={onAgentsChange}
             onE2bChange={onE2bChange}
             onFactoryReset={onFactoryReset}
-            nickname={nickname}
-            onNicknameChange={onNicknameChange}
+            userNickname={userNickname}
+            onUserNicknameChange={onUserNicknameChange}
             avatar={avatar}
             onAvatarChange={onAvatarChange}
             agentList={agentList}
@@ -574,7 +666,7 @@ const MessagePanel = forwardRef(({
               </div>
               <select
                 value={agentId || ''}
-                onChange={(e) => onAgentChange?.(activeChatId, e.target.value || null)}
+                onChange={(e) => onAgentChange?.(activeSessionId, e.target.value || null)}
                 title="Select agent"
                 aria-label="Select agent"
               >
@@ -589,21 +681,28 @@ const MessagePanel = forwardRef(({
         <div className="llm-selector-group">
           <div className="llm-selector">
             <Cloud width={14} height={14} />
-            <select
-              value={activeLlmProfileId || ''}
-              onChange={(e) => onSelectLLM?.(e.target.value || null)}
-              title={t('llmSettings.profile')}
-            >
-              {llmProfiles?.length ? (
-                llmProfiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name || `${profile.provider} / ${profile.model}`}
-                  </option>
-                ))
-              ) : (
-                <option value="">{t('message.noProviderConfigured')}</option>
-              )}
-            </select>
+            <div className="llm-selector-control">
+              <div className="llm-selector-label" aria-hidden="true">
+                <span className="llm-selector-provider">{selectedLlmProviderLabel}</span>
+                <span className="llm-selector-model">{selectedLlmModelLabel}</span>
+              </div>
+              <select
+                value={activeLlmProfileId || ''}
+                onChange={(e) => onSelectLLM?.(e.target.value || null)}
+                title={t('llmSettings.profile')}
+                aria-label={t('llmSettings.profile')}
+              >
+                {llmProfiles?.length ? (
+                  llmProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name || `${profile.provider} / ${profile.model}`}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">{t('message.noProviderConfigured')}</option>
+                )}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -617,7 +716,7 @@ const MessagePanel = forwardRef(({
         </div>
       </div>
 
-      <div className="message-list">
+      <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
         {messages.length === 0 ? (
           <div className="message-empty">
             <div className="message-empty-icon">
@@ -634,12 +733,24 @@ const MessagePanel = forwardRef(({
                 {msg.role === 'assistant' && avatar ? (
                   <img src={avatar} alt="" />
                 ) : (
-                  msg.role === 'user' ? 'U' : assistantInitial
+                  msg.role === 'user' ? userInitial : assistantInitial
                 )}
               </div>
               <div className="message-content">
                 <div className="message-role">
-                  {msg.role === 'user' ? t('message.you') : assistantName}
+                  <span>{msg.role === 'user' ? userName : assistantName}</span>
+                  {msg.role === 'user' && editingMessageId !== msg.id && (
+                    <button
+                      type="button"
+                      className="message-edit-btn"
+                      onClick={() => startEditMessage(msg)}
+                      disabled={streaming}
+                      title={t('message.edit')}
+                      aria-label={t('message.edit')}
+                    >
+                      <FileEdit width={14} height={14} />
+                    </button>
+                  )}
                 </div>
                 {msg.role === 'assistant' && (msg.thinking || (streaming && msg.content === '')) && (
                   <ThinkingBlock thinking={msg.thinking} isThinking={streaming && msg === messages[messages.length - 1]} />
@@ -655,16 +766,43 @@ const MessagePanel = forwardRef(({
                   msg.toolCalls.map((tc, i) => <ToolBlock key={tc.id || i} toolCall={tc} />)
                 )}
                 <div className="message-text">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{msg.content}</ReactMarkdown>
-                  {msg.role === 'assistant' && msg.content?.startsWith('Error:') && !streaming && onRetry && (
-                    <button className="retry-btn" onClick={() => onRetry()} title={t('message.retry')}>Retry</button>
+                  {editingMessageId === msg.id ? (
+                    <div className="message-edit-form">
+                      <textarea
+                        className="message-edit-input"
+                        value={editingText}
+                        onChange={handleEditTextChange}
+                        onKeyDown={handleEditKeyDown}
+                        autoFocus
+                        rows={Math.min(editingText.split('\n').length || 1, 6)}
+                      />
+                      <div className="message-edit-actions">
+                        <button type="button" className="message-edit-cancel" onClick={cancelEditMessage}>
+                          {t('message.cancel')}
+                        </button>
+                        <button
+                          type="button"
+                          className="message-edit-submit"
+                          onClick={submitEditMessage}
+                          disabled={!editingText.trim() || streaming}
+                        >
+                          {t('message.submitEdit')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{msg.content}</ReactMarkdown>
+                      {msg.role === 'assistant' && msg.content?.startsWith('Error:') && !streaming && onRetry && (
+                        <button className="retry-btn" onClick={() => onRetry()} title={t('message.retry')}>Retry</button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
             </div>
           ))
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       <div className="message-input-area">
@@ -691,6 +829,25 @@ const MessagePanel = forwardRef(({
                   className="file-context-remove"
                   onClick={() => removeContextFile(file.relativePath)}
                   title="Remove file context"
+                >
+                  <X width={12} height={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {queuedMessages.length > 0 && (
+          <div className="message-queue-list" aria-label="Queued messages">
+            {queuedMessages.map((item, index) => (
+              <div key={item.id} className="message-queue-item">
+                <span className="message-queue-index">{index + 1}</span>
+                <span className="message-queue-text">{item.text || (item.images?.length ? t('app.image') : '')}</span>
+                <button
+                  type="button"
+                  className="message-queue-remove"
+                  onClick={() => onRemoveQueuedMessage?.(item.id)}
+                  title={t('message.remove')}
+                  aria-label={t('message.remove')}
                 >
                   <X width={12} height={12} />
                 </button>
@@ -802,7 +959,7 @@ const MessagePanel = forwardRef(({
                 </span>
               );
             })()}
-            <ContextBudget messages={messages} />
+            <ContextBudget messages={messages} llmConfig={llmConfig} />
           </div>
         </div>
       </div>

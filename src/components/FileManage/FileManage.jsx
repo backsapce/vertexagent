@@ -9,6 +9,8 @@ import './FileManage.css';
 // Breakpoint for mobile/tablet
 const MOBILE_BREAKPOINT = 768;
 
+const ROOT_ID = 'root';
+
 function triggerDownload(blob, fileName) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -78,22 +80,72 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
     };
   }, [fileSource]);
 
+  const listDirectoryChildren = useCallback(async (path) => {
+    let children = fileSource === 'local'
+      ? await loadFiles(path)
+      : await listFiles(path);
+    if (!Array.isArray(children) && children?.children) children = children.children;
+    return Array.isArray(children) ? children : [];
+  }, [fileSource]);
+
+  const hydrateExpandedDirs = useCallback(async (rootDir, expandedIds) => {
+    const existingDirIds = new Set([ROOT_ID]);
+
+    const hydrateNode = async (node, parentDir = '') => {
+      if (node.type !== 'directory') return node;
+
+      existingDirIds.add(node.id);
+      const rawPath = parentDir ? `${parentDir}/${node.name}` : node.name;
+      const dirPath = node.id === ROOT_ID
+        ? ''
+        : rawPath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
+      let children = Array.isArray(node.children) ? node.children : [];
+
+      if (node.id !== ROOT_ID && expandedIds.has(node.id)) {
+        try {
+          children = await listDirectoryChildren(dirPath);
+        } catch (err) {
+          console.warn(`Failed to refresh directory ${dirPath}:`, err);
+        }
+      }
+
+      const hydratedChildren = [];
+      for (const child of children) {
+        hydratedChildren.push(await hydrateNode(child, dirPath));
+      }
+      return { ...node, children: hydratedChildren };
+    };
+
+    const tree = await hydrateNode({ ...rootDir, expanded: true });
+    const nextExpanded = new Set([ROOT_ID]);
+    for (const id of expandedIds) {
+      if (existingDirIds.has(id)) nextExpanded.add(id);
+    }
+    return { tree, expanded: nextExpanded };
+  }, [listDirectoryChildren]);
+
   // Reload tree after any mutation
   const refreshTree = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const rootDir = await fileOps.list();
-      setFileTree({ ...rootDir, expanded: true });
-      setExpandedDirs(new Set(['root']));
+      const expandedIds = new Set(expandedDirsRef.current);
+      expandedIds.add(ROOT_ID);
+      const { tree, expanded } = await hydrateExpandedDirs(rootDir, expandedIds);
+      setFileTree(tree);
+      setExpandedDirs(expanded);
+      expandedDirsRef.current = expanded;
     } catch (_err) {
       setError(fileSource === 'local' ? t('filemanage.loadLocalError') : t('filemanage.loadRemoteError'));
       setFileTree({ id: 'root', name: '/', type: 'directory', expanded: true, children: [] });
-      setExpandedDirs(new Set(['root']));
+      const expanded = new Set([ROOT_ID]);
+      setExpandedDirs(expanded);
+      expandedDirsRef.current = expanded;
     } finally {
       setLoading(false);
     }
-  }, [fileOps, fileSource, t]);
+  }, [fileOps, fileSource, hydrateExpandedDirs, t]);
 
   // Initial load when shown or source/trigger changes
   useEffect(() => {
@@ -186,11 +238,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
       const rawPath = parentDir ? `${parentDir}/${dirName}` : dirName;
       const path = rawPath.replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
       try {
-        let children = fileSource === 'local'
-          ? (await loadFiles(path))
-          : (await listFiles(path));
-        // Some providers (e.g. E2B) return a wrapped object instead of a plain array
-        if (!Array.isArray(children) && children.children) children = children.children;
+        const children = await listDirectoryChildren(path);
         setFileTree((prevTree) => {
           const updateNode = (node) => {
             if (node.id === dirId) return { ...node, children };
@@ -209,7 +257,7 @@ const FileManage = ({ show, onClose, refreshTrigger, width, onWidthChange }) => 
         });
       }
     }
-  }, [fileSource]);
+  }, [listDirectoryChildren]);
 
   // New file / dir — unified via adapter
   const handleNewFile = useCallback(async () => {

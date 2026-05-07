@@ -241,7 +241,7 @@ export const User = ({ width = 16, height = 16, className = '' }) => (
   </IconBase>
 );
 
-// Message & Chat Icons
+// Message & Session Icons
 export const MessageSquare = ({ width = 48, height = 48, className = '' }) => (
   <IconBase width={width} height={height} viewBox="0 0 24 24" className={className}>
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />

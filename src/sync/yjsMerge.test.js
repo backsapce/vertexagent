@@ -1,0 +1,66 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  createStructuredUpdate,
+  formatStructuredContent,
+  mergeStructuredContent,
+  mergeStructuredUpdates,
+  parseStructuredContent,
+  readStructuredUpdate,
+} from './yjsMerge.js';
+
+test('JSON object merge preserves concurrent keys', () => {
+  const left = createStructuredUpdate({ a: 1 });
+  const right = createStructuredUpdate({ b: 2 });
+  const merged = mergeStructuredUpdates([left, right]);
+  assert.deepEqual(merged.data, { a: 1, b: 2 });
+});
+
+test('identity arrays merge objects without duplicate ids', () => {
+  const left = createStructuredUpdate({ sessions: [{ id: 'a', title: 'A' }] });
+  const right = createStructuredUpdate({ sessions: [{ id: 'b', title: 'B' }] });
+  const merged = mergeStructuredUpdates([left, right]);
+  assert.deepEqual(
+    merged.data.sessions.map((session) => session.id).sort(),
+    ['a', 'b']
+  );
+});
+
+test('session metadata merge keeps newer agent selection by timestamp', () => {
+  const oldSession = { id: 's1', title: 'Chat', agentId: 'z-agent', updatedAtMs: 1000 };
+  const newSession = { id: 's1', title: 'Chat', agentId: 'a-agent', updatedAtMs: 2000 };
+
+  const merged = mergeStructuredUpdates([
+    createStructuredUpdate([oldSession]),
+    createStructuredUpdate([newSession]),
+  ]);
+
+  assert.equal(merged.data[0].agentId, 'a-agent');
+  assert.equal(merged.data[0].updatedAtMs, 2000);
+});
+
+test('scalar conflicts resolve to one deterministic Yjs value', () => {
+  const left = createStructuredUpdate({ theme: 'light' });
+  const right = createStructuredUpdate({ theme: 'dark' });
+  const first = mergeStructuredUpdates([left, right]).data.theme;
+  const second = mergeStructuredUpdates([right, left]).data.theme;
+  assert.equal(first, second);
+  assert.ok(['light', 'dark'].includes(first));
+});
+
+test('YAML roundtrip uses YAML output', () => {
+  const remote = createStructuredUpdate({ general: { userNickname: 'Ada' } });
+  const merged = mergeStructuredContent('config.yaml', 'theme: dark\n', remote);
+  const parsed = parseStructuredContent('config.yaml', merged.content);
+  assert.equal(parsed.theme, 'dark');
+  assert.equal(parsed.general.userNickname, 'Ada');
+  assert.match(formatStructuredContent('config.yaml', parsed), /theme: dark/);
+});
+
+test('merged update can reconstruct structured data', () => {
+  const merged = mergeStructuredUpdates([
+    createStructuredUpdate({ files: [{ name: 'a.md', size: 1 }] }),
+    createStructuredUpdate({ files: [{ name: 'b.md', size: 2 }] }),
+  ]);
+  assert.deepEqual(readStructuredUpdate(merged.update).files.map((file) => file.name).sort(), ['a.md', 'b.md']);
+});

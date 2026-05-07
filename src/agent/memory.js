@@ -6,7 +6,7 @@
  * - USER.md: user profile, preferences, communication style
  *
  * Entries are delimited by `§` and have character limits to prevent unbounded growth.
- * Memory is loaded once per chat session (frozen snapshot), not per turn.
+ * Memory is loaded once per session (frozen snapshot), not per turn.
  * Mid-session writes update disk but do NOT change the active system prompt.
  *
  * Usage:

@@ -38,7 +38,8 @@ const WORKING_DIR = resolve(join(process.cwd(), '.vertex-agent'));
 const PORT = process.env.AGENT_PORT || 3099;
 const MAX_TIMEOUT = 30_000;
 const TOKEN_FILE = process.env.AGENT_TOKEN_FILE || join(process.cwd(), '.agent-token');
-const ALLOWED_ORIGINS = (process.env.AGENT_ALLOWED_ORIGINS || 'http://localhost:5173').split(',');
+const ALLOWED_ORIGINS = (process.env.AGENT_ALLOWED_ORIGINS || 'https://127.0.0.1:5173').split(',');
+const COMMAND_SHELL = process.env.AGENT_SHELL || (process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : undefined);
 
 // ─── MIME types ─────────────────────────────────────────────────────────────
 
@@ -81,6 +82,7 @@ function resolveStaticPath(pathname) {
 
 function corsHeaders(req) {
   const origin = req.headers['origin'] || '';
+  console.log(`[agent] Request from origin: ${origin}`,ALLOWED_ORIGINS);
   const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     'Access-Control-Allow-Origin': allowed,
@@ -180,14 +182,22 @@ function isSafePath(inputPath) {
 
 function execCommand(cmd, timeout = MAX_TIMEOUT) {
   return new Promise((resolve) => {
-    exec(cmd, { timeout, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+    exec(cmd, { timeout, maxBuffer: 10 * 1024 * 1024, shell: COMMAND_SHELL }, (error, stdout, stderr) => {
       resolve({
         stdout: stdout || '',
         stderr: stderr || '',
         code: error ? error.code ?? 1 : 0,
+        platform: process.platform,
+        shell: COMMAND_SHELL || 'default',
+        cwd: process.cwd(),
       });
     });
   });
+}
+
+function truncateLog(value, max = 2000) {
+  if (!value) return '';
+  return value.length > max ? `${value.slice(0, max)}\n...[truncated]` : value;
 }
 
 function json(res, status, data, req) {
@@ -235,7 +245,13 @@ const server = createServer(async (req, res) => {
       console.log(`[agent] ────────────────────────────────\n`);
     }
 
-    return json(res, 200, { status: 'ok', needsAuth: !authed }, req);
+    return json(res, 200, {
+      status: 'ok',
+      needsAuth: !authed,
+      platform: process.platform,
+      shell: COMMAND_SHELL || 'default',
+      cwd: process.cwd(),
+    }, req);
   }
 
   // ── Token exchange (connect) ───────────────────────────────────────────
@@ -303,7 +319,11 @@ const server = createServer(async (req, res) => {
 
     console.log(`[agent] exec: ${cmd}`);
     const result = await execCommand(cmd);
-    console.log(`[agent] exit code: ${result.code}`);
+    console.log(`[agent] exit code: ${result.code} (${result.platform}, ${result.shell}, cwd=${result.cwd})`);
+    if (result.code !== 0) {
+      if (result.stdout) console.log(`[agent] stdout:\n${truncateLog(result.stdout)}`);
+      if (result.stderr) console.warn(`[agent] stderr:\n${truncateLog(result.stderr)}`);
+    }
     return json(res, 200, result, req);
   }
 

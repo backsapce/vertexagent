@@ -1,7 +1,7 @@
 /**
  * Unified LLM Service for Vertex Agent.
  *
- * Provides a single API surface for the chat UI regardless of which
+ * Provides a single API surface for the session UI regardless of which
  * provider is selected. Supports streaming responses.
  *
  * Usage:
@@ -11,7 +11,7 @@
  *   llm.configure({ provider: 'openai', apiKey: 'sk-...', model: 'gpt-4o' });
  *
  *   // Stream a response
- *   for await (const chunk of llm.chat(messages)) {
+ *   for await (const chunk of llm.streamSession(messages)) {
  *     process.stdout.write(chunk);
  *   }
  */
@@ -41,6 +41,18 @@ const providers = {
 
 let activeProfileId = null;
 let profiles = {};
+let modelsDevCatalogPromise = null;
+
+const MODELS_DEV_API_URL = 'https://models.dev/api.json';
+const MODELS_DEV_TIMEOUT_MS = 5000;
+const MODELS_DEV_PROVIDER = {
+  openai: 'openai',
+  anthropic: 'anthropic',
+  gemini: 'google',
+  qwen: 'alibaba',
+  deepseek: 'deepseek',
+  openrouter: 'openrouter',
+};
 
 function generateProfileId() {
   return `llm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -52,6 +64,7 @@ function defaultProfileName(cfg) {
 }
 
 function normalizeProfile(id, cfg = {}) {
+  const contextWindow = Number(cfg.contextWindow);
   return {
     id,
     name: cfg.name || defaultProfileName(cfg),
@@ -59,7 +72,103 @@ function normalizeProfile(id, cfg = {}) {
     apiKey: cfg.apiKey || null,
     baseUrl: cfg.baseUrl || null,
     model: cfg.model || null,
+    contextWindow: Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : null,
   };
+}
+
+async function loadModelsDevCatalog() {
+  if (!modelsDevCatalogPromise) {
+    modelsDevCatalogPromise = new Promise((resolve, reject) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), MODELS_DEV_TIMEOUT_MS);
+      fetch(MODELS_DEV_API_URL, { signal: controller.signal })
+        .then((res) => {
+          clearTimeout(timeoutId);
+          resolve(res);
+        })
+        .catch((err) => {
+          clearTimeout(timeoutId);
+          reject(err);
+        });
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`models.dev error ${res.status}`);
+        return res.json();
+      })
+      .catch((err) => {
+        modelsDevCatalogPromise = null;
+        throw err;
+      });
+  }
+  return modelsDevCatalogPromise;
+}
+
+function normalizeModelsDevModelId(model) {
+  return String(model || '').trim().replace(/^models\//, '');
+}
+
+function getModelsDevLimit(modelInfo) {
+  const limit = modelInfo?.limit?.context ?? modelInfo?.context ?? modelInfo?.contextWindow;
+  const numeric = Number(limit);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function getModelsDevProviderCandidates(providerId, modelId) {
+  const candidates = [
+    MODELS_DEV_PROVIDER[providerId],
+    providerId,
+  ];
+
+  if ((providerId === 'openrouter' || providerId === 'custom-openai') && modelId?.includes('/')) {
+    candidates.push(modelId.split('/')[0]);
+  }
+
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+function getModelsDevModelCandidates(modelId) {
+  const normalized = normalizeModelsDevModelId(modelId);
+  const candidates = [normalized];
+  if (normalized.includes('/')) {
+    candidates.push(normalized.split('/').slice(1).join('/'));
+  }
+  candidates.push(normalized.replace(/(\d)\.(\d)/g, '$1-$2'));
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+function findModelsDevContextWindow(catalog, providerId, modelId) {
+  const providerCandidates = getModelsDevProviderCandidates(providerId, modelId);
+  const modelCandidates = getModelsDevModelCandidates(modelId);
+
+  for (const candidateProvider of providerCandidates) {
+    const provider = catalog?.[candidateProvider];
+    if (!provider?.models) continue;
+    for (const candidateModel of modelCandidates) {
+      const limit = getModelsDevLimit(provider.models[candidateModel]);
+      if (limit) return limit;
+    }
+  }
+
+  for (const provider of Object.values(catalog || {})) {
+    if (!provider?.models) continue;
+    for (const candidateModel of modelCandidates) {
+      const limit = getModelsDevLimit(provider.models[candidateModel]);
+      if (limit) return limit;
+    }
+  }
+
+  return null;
+}
+
+async function resolveContextWindow(providerId, modelId) {
+  if (!providerId || !modelId) return null;
+  try {
+    const catalog = await loadModelsDevCatalog();
+    return findModelsDevContextWindow(catalog, providerId, modelId);
+  } catch (err) {
+    console.warn('Failed to fetch model context window from models.dev:', err.message);
+    return null;
+  }
 }
 
 function normalizeSettings(saved) {
@@ -95,14 +204,28 @@ function normalizeSettings(saved) {
   return { activeProfileId: null, profiles: {} };
 }
 
+function normalizeDeletedProfileIds(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((id) => String(id)).filter(Boolean))];
+}
+
 function getProfile(profileId = activeProfileId) {
   return profileId ? profiles[profileId] : null;
 }
 
-async function persistSettings() {
+async function persistSettings({ deletedProfileId = null } = {}) {
+  const saved = await loadSettings();
+  const activeIds = new Set(Object.keys(profiles));
+  const deletedProfileIds = normalizeDeletedProfileIds(saved?.deletedProfileIds)
+    .filter((id) => !activeIds.has(id));
+  if (deletedProfileId) {
+    deletedProfileIds.push(String(deletedProfileId));
+  }
+
   await saveSettings({
     activeProfileId,
     profiles,
+    ...(deletedProfileIds.length > 0 ? { deletedProfileIds: [...new Set(deletedProfileIds)] } : {}),
   });
 }
 
@@ -136,6 +259,7 @@ const llm = {
       name: profile?.name || null,
       provider: profile?.provider || null,
       model: profile?.model || p?.defaultModel || null,
+      contextWindow: profile?.contextWindow || null,
       baseUrl: profile?.baseUrl || null,
       configured: !!(profile?.provider && profile?.apiKey),
       hasApiKey: !!profile?.apiKey,
@@ -186,7 +310,20 @@ const llm = {
       ? (cfg.id || generateProfileId())
       : (activeProfileId || generateProfileId());
     const previous = profiles[id] || { id };
-    const next = normalizeProfile(id, { ...previous, ...cfg, apiKey: cfg.apiKey || previous.apiKey });
+    const clonedApiKey = cfg.cloneApiKeyFrom ? profiles[cfg.cloneApiKeyFrom]?.apiKey : null;
+    const merged = { ...previous, ...cfg, apiKey: cfg.apiKey || previous.apiKey || clonedApiKey };
+    const modelChanged = previous.provider !== merged.provider || previous.model !== merged.model;
+    const effectiveModel = merged.model || providers[merged.provider]?.defaultModel;
+    const requestedContextWindow = Number(cfg.contextWindow);
+    const hasContextWindowOverride = Object.prototype.hasOwnProperty.call(cfg, 'contextWindow')
+      && Number.isFinite(requestedContextWindow)
+      && requestedContextWindow > 0;
+    const shouldResolveContextWindow = !hasContextWindowOverride
+      && (Object.prototype.hasOwnProperty.call(cfg, 'contextWindow') || modelChanged || !previous.contextWindow);
+    const contextWindow = hasContextWindowOverride
+      ? Math.floor(requestedContextWindow)
+      : (shouldResolveContextWindow ? await resolveContextWindow(merged.provider, effectiveModel) : previous.contextWindow);
+    const next = normalizeProfile(id, { ...merged, contextWindow });
     profiles = { ...profiles, [id]: next };
     activeProfileId = id;
     await persistSettings();
@@ -210,7 +347,7 @@ const llm = {
     if (activeProfileId === profileId) {
       activeProfileId = Object.keys(profiles)[0] || null;
     }
-    await persistSettings();
+    await persistSettings({ deletedProfileId: profileId });
     return llm.getActiveConfig();
   },
 
@@ -229,13 +366,13 @@ const llm = {
   },
 
   /**
-   * Send a chat request and return an async generator of content chunks.
+   * Send a session request and return an async generator of content chunks.
    *
    * @param {Array<{ role: string, content: string }>} messages
    * @param {Object} [opts] - { signal?, temperature?, maxTokens?, systemPrompt?, tools? }
    * @returns {AsyncGenerator<{ content?: string, reasoning?: string, toolCalls?: Array, usage?: Object }>}
    */
-  async *chat(messages, opts = {}) {
+  async *streamSession(messages, opts = {}) {
     const profile = getProfile(opts.llmProfileId);
     const provider = providers[profile?.provider];
     if (!provider) {
@@ -274,9 +411,9 @@ const llm = {
    * @param {Object} [opts]
    * @returns {Promise<string>}
    */
-  async chatComplete(messages, opts = {}) {
+  async completeSession(messages, opts = {}) {
     let result = '';
-    for await (const chunk of llm.chat(messages, opts)) {
+    for await (const chunk of llm.streamSession(messages, opts)) {
       if (typeof chunk === 'string') {
         result += chunk;
       } else if (chunk.content) {

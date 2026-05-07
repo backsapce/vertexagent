@@ -62,7 +62,7 @@
 }
 
 /* Expand button - visible when left panel is collapsed (PC mode only) */
-.chat-list-expand-btn {
+.session-list-expand-btn {
   position: fixed;
   top: 50%;
   left: 0;
@@ -83,7 +83,7 @@
   box-shadow: 2px 0 14px var(--color-shadow-soft);
 }
 
-.chat-list-expand-btn:hover {
+.session-list-expand-btn:hover {
   background: var(--color-surface-alt);
   border-color: var(--color-border-focus);
   color: var(--color-accent);
@@ -91,7 +91,7 @@
 
 /* Hide expand button on mobile */
 @media (max-width: 768px) {
-  .chat-list-expand-btn {
+  .session-list-expand-btn {
     display: none;
   }
 

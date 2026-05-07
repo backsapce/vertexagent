@@ -1,418 +1,614 @@
-/**
- * Sync Manager - orchestrates full and incremental sync to cloud backends.
- */
-
 import config from '../config/config.js';
 import {
-  listAllFiles,
-  getRootDir,
-  listEntries,
-  readText,
-  writeIncomingText,
-  mergeIncomingTextContent,
-  getDirectory,
+  deletePath,
+  hashBlob,
+  listOpfsFiles,
+  readPathBlob,
+  readPathBytes,
+  readPathText,
+  registerOpfsSyncHook,
+  writePathBytes,
+  writePathText,
 } from '../vfs/opfs.js';
-import * as webdav from './webdav.js';
-import * as s3 from './s3Compatible.js';
+import { createS3Backend, objectKey } from './s3Backend.js';
+import {
+  formatStructuredContent,
+  isStructuredPath,
+  mergeStructuredContent,
+  mergeStructuredUpdates,
+  parseStructuredContent,
+  readStructuredUpdate,
+  createStructuredUpdate,
+} from './yjsMerge.js';
 
-const REMOTE_ROOT = '/vertex-agent';
-const DEFAULT_SYNC_METHOD = 'webdav';
+const MANIFEST_FILE = 'manifest.json';
+const STATE_FILE = '.sync/state.json';
+const AUTO_DEBOUNCE_MS = 3000;
 
-/**
- * Load sync settings from config.
- */
-export async function loadSyncSettings() {
-  return config.get('sync') || { enabled: false, mode: 'manual', method: DEFAULT_SYNC_METHOD };
+let unsubscribeHook = null;
+let intervalId = null;
+let debounceId = null;
+let activeRun = null;
+let pendingAutoSync = false;
+let autoRefreshCallback = null;
+let deleteStateWrite = Promise.resolve();
+
+function encodePath(path) {
+  return btoa(unescape(encodeURIComponent(path))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-/**
- * Save sync settings.
- */
-export async function saveSyncSettings(settings) {
-  await config.merge('sync', settings);
+function objectPath(path) {
+  return `objects/${encodePath(path)}`;
 }
 
-/**
- * Get the active sync method. Only one method is used at a time.
- */
-function getSyncMethod(settingsOverride) {
-  const syncConfig = settingsOverride || config.get('sync') || {};
-  return syncConfig.method || syncConfig.provider || DEFAULT_SYNC_METHOD;
+function yjsPath(path) {
+  return `yjs/${encodePath(path)}.bin`;
 }
 
-/**
- * Build S3-compatible settings from config plus optional legacy UI values.
- * Existing settings fields map naturally as:
- *   url -> endpoint, username -> accessKeyId, password -> secretAccessKey
- */
-function getS3Settings(url, username, password, settingsOverride) {
-  const syncConfig = settingsOverride || config.get('sync') || {};
-  const s3Config = syncConfig.s3 || {};
+function sessionIdFromMessagesPath(path) {
+  return /^(?:sessions|messages)\/([^/]+)\.json$/.exec(path)?.[1] || null;
+}
+
+function agentIdFromWorkspacePath(path) {
+  return /^workspace\/([^/]+)(?:\/|$)/.exec(path)?.[1] || null;
+}
+
+function agentIdFromWorkspaceRootPath(path) {
+  return /^workspace\/([^/]+)$/.exec(path)?.[1] || null;
+}
+
+function isSessionMessagesPath(path) {
+  return Boolean(sessionIdFromMessagesPath(path));
+}
+
+function isAgentWorkspacePath(path) {
+  return Boolean(agentIdFromWorkspacePath(path));
+}
+
+function isPathOrChild(path, parentPath) {
+  return path === parentPath || path.startsWith(`${parentPath}/`);
+}
+
+function collectDeletedSessionIds(files = {}) {
+  const ids = new Set();
+  for (const [path, entry] of Object.entries(files || {})) {
+    if (!entry?.deleted) continue;
+    const id = sessionIdFromMessagesPath(path);
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+function collectDeletedAgentIds(files = {}) {
+  const ids = new Set();
+  for (const [path, entry] of Object.entries(files || {})) {
+    if (!entry?.deleted) continue;
+    const id = agentIdFromWorkspaceRootPath(path);
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+function pruneDeletedSessions(data, deletedSessionIds) {
+  if (deletedSessionIds.size === 0) return data;
+
+  if (Array.isArray(data)) {
+    return data.filter((session) => !deletedSessionIds.has(String(session?.id)));
+  }
+
+  if (data && typeof data === 'object' && Array.isArray(data.sessions)) {
+    return {
+      ...data,
+      sessions: data.sessions.filter((session) => !deletedSessionIds.has(String(session?.id))),
+    };
+  }
+
+  return data;
+}
+
+function pruneDeletedAgents(data, deletedAgentIds) {
+  if (deletedAgentIds.size === 0) return data;
+  if (!data || typeof data !== 'object' || !Array.isArray(data.agentsList)) return data;
 
   return {
-    endpoint: s3Config.endpoint || syncConfig.endpoint || url || syncConfig.url,
-    bucket: s3Config.bucket || syncConfig.bucket,
-    region: s3Config.region || syncConfig.region,
-    accessKeyId: s3Config.accessKeyId || syncConfig.accessKeyId || username || syncConfig.username,
-    secretAccessKey: s3Config.secretAccessKey || syncConfig.secretAccessKey || password || syncConfig.password,
-    prefix: s3Config.prefix || syncConfig.prefix || 'vertex-agent',
-    forcePathStyle: s3Config.forcePathStyle ?? syncConfig.forcePathStyle,
-    service: s3Config.service || syncConfig.service || 's3',
+    ...data,
+    agentsList: data.agentsList.filter((agent) => !deletedAgentIds.has(String(agent?.id))),
   };
 }
 
-function getWebdavSettings(url, username, password, settingsOverride) {
-  const syncConfig = settingsOverride || config.get('sync') || {};
+function collectDeletedLlmProfileIds(data) {
+  const ids = data?.llm?.deletedProfileIds;
+  if (!Array.isArray(ids)) return new Set();
+  return new Set(ids.map((id) => String(id)).filter(Boolean));
+}
+
+function mergeSets(...sets) {
+  const merged = new Set();
+  for (const set of sets) {
+    for (const value of set || []) merged.add(value);
+  }
+  return merged;
+}
+
+function pruneDeletedLlmProfiles(data, deletedLlmProfileIds) {
+  if (deletedLlmProfileIds.size === 0) return data;
+  if (!data || typeof data !== 'object' || !data.llm || typeof data.llm !== 'object') return data;
+
+  const profiles = data.llm.profiles && typeof data.llm.profiles === 'object'
+    ? { ...data.llm.profiles }
+    : data.llm.profiles;
+  if (profiles && typeof profiles === 'object' && !Array.isArray(profiles)) {
+    for (const id of deletedLlmProfileIds) {
+      delete profiles[id];
+    }
+  }
+
+  const remainingIds = profiles && typeof profiles === 'object' && !Array.isArray(profiles)
+    ? Object.keys(profiles)
+    : [];
+  const activeProfileId = deletedLlmProfileIds.has(String(data.llm.activeProfileId))
+    ? (remainingIds[0] || null)
+    : data.llm.activeProfileId;
+
   return {
-    url: url || syncConfig.url,
-    username: username || syncConfig.username,
-    password: password || syncConfig.password,
+    ...data,
+    llm: {
+      ...data.llm,
+      activeProfileId,
+      profiles,
+      deletedProfileIds: [...deletedLlmProfileIds],
+    },
   };
 }
 
-/**
- * Test active sync backend connection.
- */
-export async function testSyncConnection(url, username, password, settingsOverride) {
-  const method = getSyncMethod(settingsOverride);
-
-  if (method === 's3') {
-    return s3.testConnection(getS3Settings(url, username, password, settingsOverride));
-  }
-
-  const webdavSettings = getWebdavSettings(url, username, password, settingsOverride);
-  if (!webdavSettings.url || !webdavSettings.username || !webdavSettings.password) {
-    throw new Error('URL, username, and password are required for WebDAV sync.');
-  }
-  return webdav.testConnection(webdavSettings.url, webdavSettings.username, webdavSettings.password);
+function collectDeletedRecordIds(path, ...records) {
+  if (!(path === 'config.yaml' || path === 'config.yml' || path === 'config.json')) return new Set();
+  return mergeSets(...records.map((record) => collectDeletedLlmProfileIds(record)));
 }
 
-/**
- * Full sync: upload all OPFS data to active sync backend.
- */
-export async function fullSyncToServer(url, username, password, settingsOverride) {
-  if (getSyncMethod(settingsOverride) === 's3') {
-    return fullSyncToS3(getS3Settings(url, username, password, settingsOverride));
+function pruneDeletedRecords(path, data, deletedSessionIds, deletedAgentIds, deletedLlmProfileIds = new Set()) {
+  let next = data;
+  if (path === 'session.json') next = pruneDeletedSessions(next, deletedSessionIds);
+  if (path === 'config.yaml' || path === 'config.yml' || path === 'config.json') {
+    next = pruneDeletedAgents(next, deletedAgentIds);
+    next = pruneDeletedLlmProfiles(next, mergeSets(deletedLlmProfileIds, collectDeletedLlmProfileIds(next)));
   }
-  return fullSyncToWebdav(url, username, password);
+  return next;
 }
 
-async function fullSyncToWebdav(url, username, password) {
-  const rootDir = await getRootDir();
-  const files = [];
+function nowIso() {
+  return new Date().toISOString();
+}
 
-  // Recursively collect all files
-  async function collect(dir, prefix = '') {
-    for (const { name, kind } of await listEntries(dir)) {
-      const path = prefix ? `${prefix}/${name}` : name;
-      if (kind === 'file') {
-        const content = await readText(dir, name);
-        files.push({ remotePath: `${REMOTE_ROOT}/${path}`, content: content ?? '' });
+function defaultManifest() {
+  return { version: 1, updatedAt: nowIso(), files: {} };
+}
+
+function isSyncConfigured(syncConfig) {
+  return Boolean(syncConfig?.bucket && syncConfig?.accessKeyId && syncConfig?.secretAccessKey);
+}
+
+async function readJsonPath(path, fallback) {
+  try {
+    return JSON.parse(await readPathText(path));
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeJsonPath(path, data) {
+  await writePathText(path, JSON.stringify(data, null, 2), { internal: true });
+}
+
+async function loadState() {
+  return readJsonPath(STATE_FILE, { version: 1, files: {}, lastSyncAt: null });
+}
+
+async function saveState(state) {
+  state.lastSyncAt = nowIso();
+  await writeJsonPath(STATE_FILE, state);
+}
+
+function rememberDeletedPaths(paths) {
+  const deletedAt = nowIso();
+  deleteStateWrite = deleteStateWrite
+    .catch(() => {})
+    .then(async () => {
+      const state = await loadState();
+      for (const path of paths || []) {
+        const childPaths = Object.keys(state.files || {}).filter((existingPath) => isPathOrChild(existingPath, path));
+        const pathsToDelete = childPaths.length > 0 ? childPaths : [path];
+        for (const pathToDelete of pathsToDelete) {
+          state.files[pathToDelete] = {
+            ...(state.files[pathToDelete] || {}),
+            deleted: true,
+            deletedAt,
+          };
+        }
+        state.files[path] = {
+          ...(state.files[path] || {}),
+          deleted: true,
+          deletedAt,
+        };
+      }
+      await saveState(state);
+    })
+    .catch((err) => console.warn('Failed to record local delete for sync:', err));
+  return deleteStateWrite;
+}
+
+async function localFileMap() {
+  const entries = await listOpfsFiles({ hash: true });
+  return new Map(entries.map((entry) => [entry.path, entry]));
+}
+
+function makeDeleteEntry(previous = {}) {
+  return {
+    deleted: true,
+    deletedAt: previous.deletedAt || nowIso(),
+    updatedAt: nowIso(),
+    hash: previous.hash || null,
+  };
+}
+
+async function loadRemoteManifest(backend, syncConfig) {
+  return await backend.getJson(objectKey(syncConfig, MANIFEST_FILE), defaultManifest()) || defaultManifest();
+}
+
+async function saveRemoteManifest(backend, syncConfig, manifest) {
+  manifest.version = 1;
+  manifest.updatedAt = nowIso();
+  await backend.putJson(objectKey(syncConfig, MANIFEST_FILE), manifest);
+}
+
+async function readRemoteStructuredUpdate(backend, syncConfig, path, entry) {
+  const key = entry?.yjsKey || objectKey(syncConfig, yjsPath(path));
+  return backend.getBytes(key);
+}
+
+function dataFromStructuredUpdate(path, update, deletedSessionIds = new Set(), deletedAgentIds = new Set()) {
+  const data = readStructuredUpdate(update);
+  return pruneDeletedRecords(path, data, deletedSessionIds, deletedAgentIds);
+}
+
+async function writeStructuredFileFromUpdate(path, update, deletedSessionIds = new Set(), deletedAgentIds = new Set()) {
+  const data = dataFromStructuredUpdate(path, update, deletedSessionIds, deletedAgentIds);
+  await writePathText(path, formatStructuredContent(path, data), { internal: true });
+}
+
+async function applyRemoteFile(backend, syncConfig, path, entry, localEntry, deletedSessionIds = new Set(), deletedAgentIds = new Set()) {
+  if (entry.structured) {
+    const remoteUpdate = await readRemoteStructuredUpdate(backend, syncConfig, path, entry);
+    if (!remoteUpdate) return null;
+    if (localEntry) {
+      let localText = await readPathText(path);
+      if (path === 'session.json' || path === 'config.yaml' || path === 'config.yml' || path === 'config.json') {
+        const localRawData = parseStructuredContent(path, localText);
+        const remoteRawData = readStructuredUpdate(remoteUpdate);
+        const deletedLlmProfileIds = collectDeletedRecordIds(path, localRawData, remoteRawData);
+        const localData = pruneDeletedRecords(path, localRawData, deletedSessionIds, deletedAgentIds, deletedLlmProfileIds);
+        localText = formatStructuredContent(path, localData);
+        const remoteData = pruneDeletedRecords(path, remoteRawData, deletedSessionIds, deletedAgentIds, deletedLlmProfileIds);
+        const merged = mergeStructuredContent(path, localText, createStructuredUpdate(remoteData));
+        await writePathText(path, merged.content, { internal: true });
+        await backend.putBytes(entry.yjsKey || objectKey(syncConfig, yjsPath(path)), merged.update, 'application/octet-stream');
+        return { merged: true, update: merged.update };
+      }
+      const remoteData = dataFromStructuredUpdate(path, remoteUpdate, deletedSessionIds, deletedAgentIds);
+      const merged = mergeStructuredContent(path, localText, createStructuredUpdate(remoteData));
+      await writePathText(path, merged.content, { internal: true });
+      await backend.putBytes(entry.yjsKey || objectKey(syncConfig, yjsPath(path)), merged.update, 'application/octet-stream');
+      return { merged: true, update: merged.update };
+    }
+    const data = dataFromStructuredUpdate(path, remoteUpdate, deletedSessionIds, deletedAgentIds);
+    const update = createStructuredUpdate(data);
+    await writeStructuredFileFromUpdate(path, update);
+    return { merged: false, update };
+  }
+
+  const bytes = await backend.getBytes(entry.objectKey || objectKey(syncConfig, objectPath(path)));
+  if (!bytes) return null;
+  await writePathBytes(path, bytes, { internal: true });
+  return { merged: false };
+}
+
+async function pullInternal(syncConfig) {
+  const backend = createS3Backend(syncConfig);
+  const manifest = await loadRemoteManifest(backend, syncConfig);
+  const state = await loadState();
+  const local = await localFileMap();
+  const deletedSessionIds = collectDeletedSessionIds(manifest.files);
+  const deletedAgentIds = collectDeletedAgentIds(manifest.files);
+  const stats = { downloaded: 0, merged: 0, deleted: 0, skipped: 0 };
+
+  for (const [path, entry] of Object.entries(manifest.files || {})) {
+    const localEntry = local.get(path);
+
+    if (entry.deleted) {
+      const previous = state.files[path];
+      if (
+        entry.hash == null ||
+        (localEntry && (previous?.hash === localEntry.hash || isSessionMessagesPath(path)))
+      ) {
+        await deletePath(path, { internal: true });
+        stats.deleted += 1;
       } else {
-        await collect(await dir.getDirectoryHandle(name), path);
+        stats.skipped += 1;
       }
-    }
-  }
-
-  await collect(rootDir);
-
-  // Upload all files
-  let uploaded = 0;
-  let merged = 0;
-  const total = files.length;
-
-  for (const file of files) {
-    await webdav.ensureDirectory(url, username, password, webdav.normalizeUrl(file.remotePath).substring(0, file.remotePath.lastIndexOf('/')));
-    const remoteContent = await readRemoteWebdavText(url, username, password, file.remotePath);
-    const result = mergeIncomingTextContent(remoteContent, file.content, toWebdavLocalPath(file.remotePath));
-    await webdav.putFile(url, username, password, file.remotePath, result.content, getMimeType(file.remotePath));
-    if (result.merged) merged++;
-    uploaded++;
-  }
-
-  return { uploaded, total, merged };
-}
-
-async function readRemoteWebdavText(url, username, password, remotePath) {
-  try {
-    return await webdav.getFileText(url, username, password, remotePath);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Full sync: download all files from active sync backend into OPFS.
- */
-export async function fullSyncFromServer(url, username, password, settingsOverride) {
-  if (getSyncMethod(settingsOverride) === 's3') {
-    return fullSyncFromS3(getS3Settings(url, username, password, settingsOverride));
-  }
-  return fullSyncFromWebdav(url, username, password);
-}
-
-async function fullSyncFromWebdav(url, username, password) {
-  const allEntries = await collectWebdavEntries(url, username, password, REMOTE_ROOT + '/');
-
-  let downloaded = 0;
-  let directories = 0;
-  let merged = 0;
-
-  for (const entry of allEntries) {
-    const localPath = toWebdavLocalPath(entry.href);
-    if (!localPath) continue;
-
-    if (entry.isCollection) {
-      await getDirectory(...localPath.split('/').filter(Boolean));
-      directories++;
+      state.files[path] = { ...(state.files[path] || {}), deleted: true, deletedAt: entry.deletedAt };
       continue;
     }
 
-    const content = await webdav.getFileText(url, username, password, entry.href);
-    const result = await writeLocalFile(localPath, content);
-    if (result.merged) merged++;
-    downloaded++;
-  }
+    const previous = state.files[path];
+    const localDirty = localEntry && previous?.hash && previous.hash !== localEntry.hash;
+    const remoteNewer = !localEntry || !previous || entry.updatedAt !== previous.remoteUpdatedAt;
 
-  return { downloaded, directories, merged };
-}
-
-async function collectWebdavEntries(url, username, password, remotePath) {
-  const entries = await webdav.propfind(url, username, password, remotePath, 1);
-  const collected = [];
-  const normalizedPath = webdav.normalizeUrl(remotePath);
-
-  for (const entry of entries) {
-    if (webdav.normalizeUrl(entry.href) === normalizedPath) continue;
-
-    collected.push(entry);
-    if (entry.isCollection) {
-      collected.push(...await collectWebdavEntries(url, username, password, entry.href));
-    }
-  }
-
-  return collected;
-}
-
-function toWebdavLocalPath(remotePath) {
-  let localPath = remotePath;
-  const normalizedRoot = webdav.normalizeUrl(REMOTE_ROOT);
-  if (localPath.startsWith(normalizedRoot + '/')) {
-    localPath = localPath.substring(normalizedRoot.length + 1);
-  } else if (localPath.startsWith(normalizedRoot)) {
-    localPath = localPath.substring(normalizedRoot.length);
-  }
-  return localPath.replace(/^\/+|\/+$/g, '');
-}
-
-async function fullSyncToS3(s3Settings) {
-  await s3.assertPrefixExists(s3Settings);
-  const files = await getLocalFileSnapshot();
-  let uploaded = 0;
-  let merged = 0;
-
-  for (const file of files) {
-    const remoteContent = await readRemoteS3Text(s3Settings, file.localPath);
-    const result = mergeIncomingTextContent(remoteContent, file.content, file.localPath);
-    await s3.putObject(s3Settings, file.localPath, result.content, getMimeType(file.localPath));
-    if (result.merged) merged++;
-    uploaded++;
-  }
-
-  return { uploaded, total: files.length, merged };
-}
-
-async function readRemoteS3Text(s3Settings, localPath) {
-  try {
-    return await s3.getObjectText(s3Settings, localPath);
-  } catch {
-    return null;
-  }
-}
-
-async function fullSyncFromS3(s3Settings) {
-  await s3.assertPrefixExists(s3Settings);
-  const objects = await s3.listObjects(s3Settings);
-  let downloaded = 0;
-  let directories = 0;
-  let merged = 0;
-
-  for (const object of objects) {
-    const localPath = s3.toLocalPath(s3Settings, object.key);
-    if (!localPath) continue;
-
-    if (localPath.endsWith('/')) {
-      await getDirectory(...localPath.split('/').filter(Boolean));
-      directories++;
+    if (!remoteNewer) {
+      stats.skipped += 1;
       continue;
     }
 
-    const content = await s3.getObjectText(s3Settings, localPath);
-    const result = await writeLocalFile(localPath, content);
-    if (result.merged) merged++;
-    downloaded++;
-  }
-
-  return { downloaded, directories, merged };
-}
-
-async function writeLocalFile(localPath, content) {
-  const parts = localPath.split('/').filter(Boolean);
-  const fileName = parts.pop();
-  if (!fileName) return { merged: false };
-
-  const dir = parts.length > 0 ? await getDirectory(...parts) : await getRootDir();
-  return writeIncomingText(dir, fileName, content, localPath);
-}
-
-/**
- * Get all current OPFS files for diff comparison.
- * Returns array of { localPath, content }.
- */
-export async function getLocalFileSnapshot() {
-  const allFiles = await listAllFiles();
-  return allFiles.map(f => ({
-    localPath: f.path,
-    content: f.content ?? '',
-    size: f.size ?? 0,
-  }));
-}
-
-/**
- * Incremental sync: compare local snapshot with cached, upload changes.
- */
-export async function incrementalSync(url, username, password, cachedSnapshot, setCachedSnapshot, settingsOverride) {
-  if (getSyncMethod(settingsOverride) === 's3') {
-    return incrementalSyncS3(getS3Settings(url, username, password, settingsOverride), cachedSnapshot, setCachedSnapshot);
-  }
-  return incrementalSyncWebdav(url, username, password, cachedSnapshot, setCachedSnapshot);
-}
-
-async function incrementalSyncWebdav(url, username, password, cachedSnapshot, setCachedSnapshot) {
-  const currentSnapshot = await getLocalFileSnapshot();
-  const cachedMap = new Map();
-  const currentMap = new Map();
-
-  if (cachedSnapshot) {
-    for (const file of cachedSnapshot) {
-      cachedMap.set(file.localPath, file);
+    if (!entry.structured && localDirty && localEntry.lastModified > Date.parse(entry.updatedAt || 0)) {
+      stats.skipped += 1;
+      continue;
     }
+
+    const result = await applyRemoteFile(backend, syncConfig, path, entry, localEntry, deletedSessionIds, deletedAgentIds);
+    if (!result) {
+      stats.skipped += 1;
+      continue;
+    }
+    const file = await readPathBlob(path);
+    state.files[path] = {
+      hash: await hashBlob(file),
+      remoteUpdatedAt: entry.updatedAt,
+      yjsKey: entry.yjsKey || null,
+      objectKey: entry.objectKey || null,
+      deleted: false,
+    };
+    if (result.merged) stats.merged += 1;
+    else stats.downloaded += 1;
   }
 
-  for (const file of currentSnapshot) {
-    currentMap.set(file.localPath, file);
-  }
+  await saveState(state);
+  return stats;
+}
 
-  const changes = { uploaded: 0, deleted: 0, errors: [] };
+async function pushInternal(syncConfig) {
+  await deleteStateWrite.catch(() => {});
+  const backend = createS3Backend(syncConfig);
+  const manifest = await loadRemoteManifest(backend, syncConfig);
+  const state = await loadState();
+  const local = await localFileMap();
+  const stats = { uploaded: 0, merged: 0, deleted: 0, skipped: 0 };
 
-  // Upload new or changed files
-  for (const [path, file] of currentMap) {
-    const cached = cachedMap.get(path);
-    if (!cached || cached.content !== file.content || cached.size !== file.size) {
-      try {
-        const remotePath = `${REMOTE_ROOT}/${path}`;
-        const dirPart = remotePath.substring(0, remotePath.lastIndexOf('/'));
-        await webdav.ensureDirectory(url, username, password, dirPart);
-        const remoteContent = await readRemoteWebdavText(url, username, password, remotePath);
-        const result = mergeIncomingTextContent(remoteContent, file.content, path);
-        await webdav.putFile(url, username, password, remotePath, result.content, getMimeType(remotePath));
-        changes.uploaded++;
-      } catch (err) {
-        changes.errors.push({ path, error: err.message });
+  for (const [path, previous] of Object.entries(state.files || {})) {
+    if (previous.deleted) {
+      if (!manifest.files[path]?.deleted) {
+        const entry = makeDeleteEntry(previous);
+        manifest.files[path] = entry;
+        state.files[path] = { ...previous, ...entry };
+        stats.deleted += 1;
       }
+      continue;
     }
+    if (local.has(path)) continue;
+    const entry = makeDeleteEntry(previous);
+    manifest.files[path] = entry;
+    state.files[path] = { ...previous, ...entry };
+    stats.deleted += 1;
   }
 
-  // Delete removed files
-  for (const [path, _cached] of cachedMap) {
-    if (!currentMap.has(path)) {
-      try {
-        const remotePath = `${REMOTE_ROOT}/${path}`;
-        await webdav.deleteEntry(url, username, password, remotePath);
-        changes.deleted++;
-      } catch (err) {
-        changes.errors.push({ path, error: err.message });
+  const deletedSessionIds = collectDeletedSessionIds(state.files);
+  const deletedAgentIds = collectDeletedAgentIds(state.files);
+
+  for (const [path, entry] of local) {
+    const previous = state.files[path];
+    const remoteEntry = manifest.files[path];
+    if ((previous?.deleted || remoteEntry?.deleted) && isSessionMessagesPath(path)) {
+      if (!manifest.files[path]?.deleted) {
+        const deleteEntry = makeDeleteEntry(previous);
+        manifest.files[path] = deleteEntry;
+        state.files[path] = { ...(previous || {}), ...deleteEntry };
       }
+      await deletePath(path, { internal: true });
+      state.files[path] = {
+        ...(previous || {}),
+        ...(state.files[path] || {}),
+        deleted: true,
+        deletedAt: remoteEntry?.deletedAt || state.files[path]?.deletedAt || previous?.deletedAt || nowIso(),
+        remoteUpdatedAt: remoteEntry?.updatedAt || previous?.remoteUpdatedAt || null,
+      };
+      stats.deleted += 1;
+      continue;
     }
+
+    const agentId = agentIdFromWorkspacePath(path);
+    if (deletedAgentIds.has(agentId) && isAgentWorkspacePath(path)) {
+      if (!manifest.files[path]?.deleted) {
+        const deleteEntry = makeDeleteEntry(previous);
+        manifest.files[path] = deleteEntry;
+        state.files[path] = { ...(previous || {}), ...deleteEntry };
+      }
+      if (agentId) await deletePath(`workspace/${agentId}`, { internal: true });
+      state.files[path] = {
+        ...(previous || {}),
+        ...(state.files[path] || {}),
+        deleted: true,
+        deletedAt: remoteEntry?.deletedAt || state.files[path]?.deletedAt || previous?.deletedAt || nowIso(),
+        remoteUpdatedAt: remoteEntry?.updatedAt || previous?.remoteUpdatedAt || null,
+      };
+      stats.deleted += 1;
+      continue;
+    }
+
+    const shouldPruneIndex = (path === 'session.json' && deletedSessionIds.size > 0)
+      || ((path === 'config.yaml' || path === 'config.yml' || path === 'config.json') && deletedAgentIds.size > 0);
+    if (!shouldPruneIndex && previous?.hash === entry.hash && remoteEntry && !remoteEntry.deleted) {
+      stats.skipped += 1;
+      continue;
+    }
+
+    const updatedAt = new Date(entry.lastModified || Date.now()).toISOString();
+    const structured = isStructuredPath(path);
+    const rawKey = objectKey(syncConfig, objectPath(path));
+    const updateKey = objectKey(syncConfig, yjsPath(path));
+
+    if (structured) {
+      const localText = await readPathText(path);
+      const localRawData = parseStructuredContent(path, localText);
+      let localData = pruneDeletedRecords(path, localRawData, deletedSessionIds, deletedAgentIds);
+      let localUpdate = createStructuredUpdate(localData);
+      if (path === 'session.json' || path === 'config.yaml' || path === 'config.yml' || path === 'config.json') {
+        await writePathText(path, formatStructuredContent(path, localData), { internal: true });
+      }
+      const remoteUpdate = remoteEntry && !remoteEntry.deleted
+        ? await readRemoteStructuredUpdate(backend, syncConfig, path, remoteEntry)
+        : null;
+      if (remoteUpdate) {
+        const remoteRawData = readStructuredUpdate(remoteUpdate);
+        const deletedLlmProfileIds = collectDeletedRecordIds(path, localRawData, remoteRawData);
+        localData = pruneDeletedRecords(path, localRawData, deletedSessionIds, deletedAgentIds, deletedLlmProfileIds);
+        const remoteData = pruneDeletedRecords(path, remoteRawData, deletedSessionIds, deletedAgentIds, deletedLlmProfileIds);
+        localUpdate = createStructuredUpdate(localData);
+        const merged = mergeStructuredUpdates([createStructuredUpdate(remoteData), localUpdate]);
+        localUpdate = merged.update;
+        await writePathText(path, formatStructuredContent(path, merged.data), { internal: true });
+        stats.merged += 1;
+      }
+      const content = await readPathText(path);
+      await backend.putBytes(updateKey, localUpdate, 'application/octet-stream');
+      await backend.putBytes(rawKey, new TextEncoder().encode(content), path.endsWith('.json') ? 'application/json' : 'text/yaml');
+    } else {
+      await backend.putBytes(rawKey, await readPathBytes(path));
+    }
+
+    const finalFile = await readPathBlob(path);
+    const finalHash = await hashBlob(finalFile);
+
+    manifest.files[path] = {
+      structured,
+      deleted: false,
+      hash: finalHash,
+      size: finalFile.size,
+      updatedAt,
+      objectKey: rawKey,
+      yjsKey: structured ? updateKey : null,
+    };
+    state.files[path] = {
+      hash: finalHash,
+      remoteUpdatedAt: updatedAt,
+      objectKey: rawKey,
+      yjsKey: structured ? updateKey : null,
+      deleted: false,
+    };
+    stats.uploaded += 1;
   }
 
-  // Update snapshot
-  setCachedSnapshot(currentSnapshot);
-
-  return changes;
+  await saveRemoteManifest(backend, syncConfig, manifest);
+  await saveState(state);
+  return stats;
 }
 
-async function incrementalSyncS3(s3Settings, cachedSnapshot, setCachedSnapshot) {
-  await s3.assertPrefixExists(s3Settings);
-  const currentSnapshot = await getLocalFileSnapshot();
-  const cachedMap = new Map();
-  const currentMap = new Map();
-
-  if (cachedSnapshot) {
-    for (const file of cachedSnapshot) {
-      cachedMap.set(file.localPath, file);
-    }
-  }
-
-  for (const file of currentSnapshot) {
-    currentMap.set(file.localPath, file);
-  }
-
-  const changes = { uploaded: 0, deleted: 0, errors: [] };
-
-  for (const [path, file] of currentMap) {
-    const cached = cachedMap.get(path);
-    if (!cached || cached.content !== file.content || cached.size !== file.size) {
-      try {
-        const remoteContent = await readRemoteS3Text(s3Settings, path);
-        const result = mergeIncomingTextContent(remoteContent, file.content, path);
-        await s3.putObject(s3Settings, path, result.content, getMimeType(path));
-        changes.uploaded++;
-      } catch (err) {
-        changes.errors.push({ path, error: err.message });
-      }
-    }
-  }
-
-  for (const [path] of cachedMap) {
-    if (!currentMap.has(path)) {
-      try {
-        await s3.deleteObject(s3Settings, path);
-        changes.deleted++;
-      } catch (err) {
-        changes.errors.push({ path, error: err.message });
-      }
-    }
-  }
-
-  setCachedSnapshot(currentSnapshot);
-
-  return changes;
+function getSyncConfig() {
+  return config.get('sync') || {};
 }
 
-/**
- * Infer MIME type from file path.
- */
-function getMimeType(filePath) {
-  const ext = filePath.split('.').pop().toLowerCase();
-  const mimeMap = {
-    'json': 'application/json',
-    'yaml': 'text/yaml',
-    'yml': 'text/yaml',
-    'md': 'text/markdown',
-    'txt': 'text/plain',
-    'html': 'text/html',
-    'css': 'text/css',
-    'js': 'application/javascript',
-    'jsx': 'application/javascript',
-    'ts': 'application/typescript',
-    'tsx': 'application/typescript',
-    'png': 'image/png',
-    'jpg': 'image/jpeg',
-    'jpeg': 'image/jpeg',
-    'gif': 'image/gif',
-    'svg': 'image/svg+xml',
-    'zip': 'application/zip',
+async function runExclusive(fn) {
+  if (activeRun) return activeRun;
+  activeRun = fn().finally(() => {
+    activeRun = null;
+    if (pendingAutoSync) {
+      pendingAutoSync = false;
+      queueMicrotask(() => {
+        const syncConfig = getSyncConfig();
+        if (syncConfig.enabled) {
+          syncNow(syncConfig)
+            .then(() => autoRefreshCallback?.())
+            .catch((err) => console.warn('Queued auto sync failed:', err));
+        }
+      });
+    }
+  });
+  return activeRun;
+}
+
+export async function testSyncConnection(syncConfig = getSyncConfig()) {
+  if (!isSyncConfigured(syncConfig)) throw new Error('Sync backend is not configured.');
+  const backend = createS3Backend(syncConfig);
+  await backend.test();
+  return true;
+}
+
+export async function pullSync(syncConfig = getSyncConfig()) {
+  if (!isSyncConfigured(syncConfig)) throw new Error('Sync backend is not configured.');
+  return runExclusive(() => pullInternal(syncConfig));
+}
+
+export async function pushSync(syncConfig = getSyncConfig()) {
+  if (!isSyncConfigured(syncConfig)) throw new Error('Sync backend is not configured.');
+  return runExclusive(() => pushInternal(syncConfig));
+}
+
+export async function syncNow(syncConfig = getSyncConfig()) {
+  if (!isSyncConfigured(syncConfig)) throw new Error('Sync backend is not configured.');
+  return runExclusive(async () => {
+    const pushed = await pushInternal(syncConfig);
+    const pulled = await pullInternal(syncConfig);
+    return { pulled, pushed };
+  });
+}
+
+function scheduleAutoSync(onStorageRestored, event) {
+  const deleteWrite = event?.type === 'delete' ? rememberDeletedPaths(event.paths) : Promise.resolve();
+  clearTimeout(debounceId);
+  debounceId = setTimeout(async () => {
+    await deleteWrite;
+    const syncConfig = getSyncConfig();
+    if (!syncConfig.enabled) return;
+    if (activeRun) {
+      pendingAutoSync = true;
+      return;
+    }
+    syncNow(syncConfig)
+      .then(() => onStorageRestored?.())
+      .catch((err) => console.warn('Auto sync failed:', err));
+  }, AUTO_DEBOUNCE_MS);
+}
+
+export function configureAutoSync(onStorageRestored, options = {}) {
+  if (unsubscribeHook) unsubscribeHook();
+  if (intervalId) clearInterval(intervalId);
+  autoRefreshCallback = onStorageRestored || null;
+
+  const syncConfig = getSyncConfig();
+  if (!syncConfig.enabled) {
+    autoRefreshCallback = null;
+    return () => {};
+  }
+
+  unsubscribeHook = registerOpfsSyncHook((event) => scheduleAutoSync(onStorageRestored, event));
+
+  if (syncConfig.autoOnStart && options.runStartup !== false) {
+    syncNow(syncConfig)
+      .then(() => onStorageRestored?.())
+      .catch((err) => console.warn('Startup sync failed:', err));
+  }
+
+  const minutes = Number(syncConfig.autoIntervalMinutes);
+  if (Number.isFinite(minutes) && minutes > 0) {
+    intervalId = setInterval(() => {
+      syncNow(getSyncConfig())
+        .then(() => onStorageRestored?.())
+        .catch((err) => console.warn('Periodic sync failed:', err));
+    }, Math.max(1, minutes) * 60 * 1000);
+  }
+
+  return () => {
+    if (unsubscribeHook) unsubscribeHook();
+    if (intervalId) clearInterval(intervalId);
+    unsubscribeHook = null;
+    intervalId = null;
+    autoRefreshCallback = null;
   };
-  return mimeMap[ext] || 'application/octet-stream';
 }

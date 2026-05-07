@@ -1,3 +1,4 @@
+import './polyfills.js'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './theme.css'
@@ -13,16 +14,13 @@ createRoot(document.getElementById('root')).render(
   </StrictMode>,
 )
 
-// Only register service worker in production — in dev mode the SW
-// would serve stale cached Vite bundles and break HMR / React internals.
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  // Register immediately so the SW begins installing right away
-  navigator.serviceWorker.register('/sw.js').catch((err) => {
+// Register the service worker in both dev and production.
+// In dev, sw.js uses network-first caching on localhost so HMR stays fresh
+// while the last loaded app shell can still open after the dev server stops.
+if ('serviceWorker' in navigator) {
+  const swUrl = new URL(`${import.meta.env.BASE_URL}sw.js`, window.location.origin)
+
+  navigator.serviceWorker.register(swUrl, { scope: import.meta.env.BASE_URL }).catch((err) => {
     console.warn('SW registration failed:', err);
-  });
-} else if (import.meta.env.DEV && 'serviceWorker' in navigator) {
-  // Unregister any SW left over from a previous production build
-  navigator.serviceWorker.getRegistrations?.().then((regs) => {
-    regs.forEach((r) => r.unregister());
   });
 }

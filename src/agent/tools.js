@@ -115,7 +115,7 @@ registry.register({
   name: 'execute_command',
   schema: {
     description:
-      'Execute a shell command on the user machine. Use this for file operations, running scripts, installing packages, and system tasks.',
+      'Execute a shell command on the selected sandbox host. Commands run in that host OS shell, so use syntax appropriate for the returned platform/shell.',
     parameters: {
       type: 'object',
       properties: {
@@ -132,6 +132,9 @@ registry.register({
   async handler({ command }, ctx) {
     const result = await executeCommand(command, ctx.agentUrl);
     let out = `Exit code: ${result.code}`;
+    if (result.platform || result.shell || result.cwd) {
+      out += `\nEnvironment: platform=${result.platform || 'unknown'}, shell=${result.shell || 'unknown'}, cwd=${result.cwd || 'unknown'}`;
+    }
     if (result.stdout) out += `\nStdout:\n${result.stdout}`;
     if (result.stderr) out += `\nStderr:\n${result.stderr}`;
     return out;

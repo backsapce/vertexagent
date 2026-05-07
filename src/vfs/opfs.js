@@ -6,14 +6,41 @@
 import JSZip from 'jszip';
 import yaml from 'js-yaml';
 import { getWorkspaceDirName } from '../agents/agents.js';
-import { notifySync } from '../sync/opfsBridge.js';
 
 const ROOT_DIR = 'vertex-agent';
+const SYNC_DIR = '.sync';
+
+const syncHooks = new Set();
 
 // ─── Core Helpers ─────────────────────────────────────────────────────────────
 
 function pathParts(path) {
   return String(path || '').split('/').filter(Boolean);
+}
+
+function normalizeLocalPath(path) {
+  return pathParts(path).join('/');
+}
+
+function isInternalSyncPath(path) {
+  return normalizeLocalPath(path).split('/')[0] === SYNC_DIR;
+}
+
+export function registerOpfsSyncHook(fn) {
+  syncHooks.add(fn);
+  return () => syncHooks.delete(fn);
+}
+
+export function notifyOpfsMutation(paths, type = 'write') {
+  const changedPaths = (Array.isArray(paths) ? paths : [paths])
+    .map(normalizeLocalPath)
+    .filter((path) => path && !isInternalSyncPath(path));
+  if (changedPaths.length === 0) return;
+
+  const event = { type, paths: changedPaths, at: Date.now() };
+  for (const fn of syncHooks) {
+    try { fn(event); } catch (err) { console.warn('OPFS sync hook failed:', err); }
+  }
 }
 
 /**
@@ -59,11 +86,12 @@ async function readJSON(dirHandle, filename) {
  * @param {string} filename
  * @param {any} data
  */
-async function writeJSON(dirHandle, filename, data) {
+async function writeJSON(dirHandle, filename, data, options = {}) {
   const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(JSON.stringify(data, null, 2));
   await writable.close();
+  if (!options.internal) notifyOpfsMutation(options.localPath || filename, 'write');
 }
 
 /**
@@ -88,11 +116,88 @@ export async function readText(dirHandle, filename) {
  * @param {string} filename
  * @param {string|Blob} content
  */
-export async function writeText(dirHandle, filename, content) {
+export async function writeText(dirHandle, filename, content, options = {}) {
   const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(content);
   await writable.close();
+  if (!options.internal) notifyOpfsMutation(options.localPath || filename, 'write');
+}
+
+export async function readPathBlob(localPath) {
+  const parts = pathParts(localPath);
+  const filename = parts.pop();
+  const dir = parts.length > 0 ? await getDirectory(...parts) : await getRootDir();
+  const fileHandle = await dir.getFileHandle(filename);
+  return fileHandle.getFile();
+}
+
+export async function readPathText(localPath) {
+  const file = await readPathBlob(localPath);
+  return file.text();
+}
+
+export async function readPathBytes(localPath) {
+  const file = await readPathBlob(localPath);
+  return new Uint8Array(await file.arrayBuffer());
+}
+
+export async function writePathBlob(localPath, content, options = {}) {
+  const parts = pathParts(localPath);
+  const filename = parts.pop();
+  const dir = parts.length > 0 ? await getDirectory(...parts) : await getRootDir();
+  await writeText(dir, filename, content, { ...options, localPath });
+}
+
+export async function writePathText(localPath, content, options = {}) {
+  await writePathBlob(localPath, content, options);
+}
+
+export async function writePathBytes(localPath, bytes, options = {}) {
+  await writePathBlob(localPath, bytes, options);
+}
+
+export async function deletePath(localPath, options = {}) {
+  const parts = pathParts(localPath);
+  const filename = parts.pop();
+  if (!filename) return;
+  const dir = parts.length > 0 ? await getDirectory(...parts) : await getRootDir();
+  try {
+    await dir.removeEntry(filename, { recursive: true });
+    if (!options.internal) notifyOpfsMutation(localPath, 'delete');
+  } catch (_e) { /* ignore */ }
+}
+
+export async function hashBlob(blob) {
+  const buffer = await blob.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function listOpfsFiles(options = {}) {
+  const root = await getRootDir();
+  const files = [];
+
+  async function walk(dir, prefix = '') {
+    for (const { name, kind } of await listEntries(dir)) {
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (!options.includeSync && isInternalSyncPath(path)) continue;
+      if (kind === 'directory') {
+        await walk(await dir.getDirectoryHandle(name), path);
+        continue;
+      }
+      const file = await (await dir.getFileHandle(name)).getFile();
+      files.push({
+        path,
+        size: file.size,
+        lastModified: file.lastModified,
+        hash: options.hash ? await hashBlob(file) : null,
+      });
+    }
+  }
+
+  await walk(root);
+  return files;
 }
 
 function parseJson(text) {
@@ -158,9 +263,10 @@ function shouldMergeIncomingFile(path) {
     'config.yaml',
     'config.yml',
     'config.json',
+    'session.json',
     'chat.json',
     'chats.json',
-  ].includes(path) || /^messages\/[^/]+\.json$/.test(path);
+  ].includes(path) || /^(sessions|messages)\/[^/]+\.json$/.test(path);
 }
 
 function formatMergedFile(path, data) {
@@ -214,13 +320,18 @@ export function mergeIncomingTextContent(existingText, incomingText, localPath) 
 
 /**
  * Write incoming backup/sync content. Known structured data files are merged
- * instead of overwritten so local config, chats, and messages are preserved.
+ * instead of overwritten so local config, sessions, and messages are preserved.
  */
 export async function writeIncomingText(dirHandle, filename, content, localPath) {
   const existingText = await readText(dirHandle, filename);
   const result = mergeIncomingTextContent(existingText, content, localPath || filename);
   await writeText(dirHandle, filename, result.content);
   return { merged: result.merged };
+}
+
+export async function writeIncomingTextExact(dirHandle, filename, content) {
+  await writeText(dirHandle, filename, content);
+  return { merged: false };
 }
 
 /**
@@ -247,69 +358,92 @@ export async function listEntries(dirHandle) {
   return entries;
 }
 
-// ─── Chat Operations ──────────────────────────────────────────────────────────
+// ─── Session Operations ───────────────────────────────────────────────────────
 
-const CHATS_FILE = 'chats.json';
-const MESSAGES_DIR = 'messages';
+const SESSION_FILE = 'session.json';
+const LEGACY_CONVERSATION_FILES = ['chats.json', 'chat.json'];
+const SESSIONS_DIR = 'sessions';
+const LEGACY_MESSAGES_DIR = 'messages';
 
 /**
- * Load all chats with their messages.
+ * Load all sessions with their messages.
  * @returns {Promise<Array>}
  */
-export async function loadChats() {
+export async function loadSessions() {
   const root = await getRootDir();
-  const chats = await readJSON(root, CHATS_FILE) || [];
-  const msgsDir = await getDirectory(MESSAGES_DIR);
+  let sessions = await readJSON(root, SESSION_FILE);
+  if (!sessions) {
+    for (const legacyFile of LEGACY_CONVERSATION_FILES) {
+      sessions = await readJSON(root, legacyFile);
+      if (sessions) break;
+    }
+  }
+  sessions = sessions || [];
+  const sessionDir = await getDirectory(SESSIONS_DIR);
+  let legacyDir = null;
 
   return Promise.all(
-    chats.map(async (chat) => ({
-      ...chat,
-      messages: (await readJSON(msgsDir, `${chat.id}.json`)) || [],
-    }))
+    sessions.map(async (session) => {
+      let messages = await readJSON(sessionDir, `${session.id}.json`);
+      if (!messages) {
+        legacyDir ||= await getDirectory(LEGACY_MESSAGES_DIR);
+        messages = await readJSON(legacyDir, `${session.id}.json`);
+      }
+      return {
+        ...session,
+        messages: messages || [],
+      };
+    })
   );
 }
 
 /**
- * Save all chats.
- * @param {Array} chats - Array of chat objects with messages
+ * Save all sessions.
+ * @param {Array} sessions - Array of session objects with messages
  */
-export async function saveChats(chats) {
+export async function saveSessions(sessions) {
   const root = await getRootDir();
-  const msgsDir = await getDirectory(MESSAGES_DIR);
+  const sessionDir = await getDirectory(SESSIONS_DIR);
 
   // Save metadata
   await writeJSON(
     root,
-    CHATS_FILE,
-    chats.map(({ messages: _messages, ...rest }) => rest)
+    SESSION_FILE,
+    sessions.map(({ messages: _messages, ...rest }) => rest),
+    { localPath: SESSION_FILE }
   );
 
   // Save messages in parallel
   await Promise.all(
-    chats.map((chat) => writeJSON(msgsDir, `${chat.id}.json`, chat.messages))
+    sessions.map((session) => writeJSON(sessionDir, `${session.id}.json`, session.messages, { localPath: `${SESSIONS_DIR}/${session.id}.json` }))
   );
-  notifySync();
 }
 
 /**
- * Delete a chat.
- * @param {Array} chats - All chats
- * @param {string} chatId - ID of chat to delete
- * @returns {Array} Remaining chats
+ * Delete a session.
+ * @param {Array} sessions - All sessions
+ * @param {string} sessionId - ID of session to delete
+ * @returns {Array} Remaining sessions
  */
-export async function deleteChat(chats, chatId) {
+export async function deleteSession(sessions, sessionId) {
   const root = await getRootDir();
-  const msgsDir = await getDirectory(MESSAGES_DIR);
-  const remaining = chats.filter((c) => c.id !== chatId);
+  const sessionDir = await getDirectory(SESSIONS_DIR);
+  const remaining = sessions.filter((c) => c.id !== sessionId);
 
   await writeJSON(
     root,
-    CHATS_FILE,
-    remaining.map(({ messages: _messages, ...rest }) => rest)
+    SESSION_FILE,
+    remaining.map(({ messages: _messages, ...rest }) => rest),
+    { localPath: SESSION_FILE }
   );
-  await deleteEntry(msgsDir, `${chatId}.json`);
+  await deleteEntry(sessionDir, `${sessionId}.json`);
+  notifyOpfsMutation(`${SESSIONS_DIR}/${sessionId}.json`, 'delete');
+  try {
+    const legacyDir = await getDirectory(LEGACY_MESSAGES_DIR);
+    await deleteEntry(legacyDir, `${sessionId}.json`);
+    notifyOpfsMutation(`${LEGACY_MESSAGES_DIR}/${sessionId}.json`, 'delete');
+  } catch (_e) { /* ignore */ }
 
-  notifySync();
 
   return remaining;
 }
@@ -364,6 +498,7 @@ export async function importFromZip(blob) {
     const dir = await getDirectory(...parts);
     await writeIncomingText(dir, fileName, await file.async('string'), path);
   }
+  notifyOpfsMutation('zip-import', 'import');
 }
 
 // ─── File Manager Operations ──────────────────────────────────────────────────
@@ -450,20 +585,22 @@ export async function saveFile(fileName, blob, dirName) {
     : dirName
     ? await getDirectory(...pathParts(dirName))
     : await getDirectory('files');
-  await writeText(dir, fileName, blob);
-  notifySync();
+  const localPath = dirName === null ? fileName : dirName ? `${normalizeLocalPath(dirName)}/${fileName}` : `files/${fileName}`;
+  await writeText(dir, fileName, blob, { localPath });
 }
 
 /**
  * Delete a file or directory.
  * @param {string} fileName
- * @param {string} category - 'root', 'messages', 'uploads', or directory path (e.g. 'folder/subfolder')
+ * @param {string} category - 'root', 'sessions', 'uploads', or directory path (e.g. 'folder/subfolder')
  * @param {boolean} isDirectory - whether to delete recursively
  */
 export async function deleteFile(fileName, category, isDirectory = false) {
   const dir =
     category === 'root' || category === null
       ? await getRootDir()
+      : category === 'sessions'
+      ? await getDirectory('sessions')
       : category === 'messages'
       ? await getDirectory('messages')
       : category === 'files'
@@ -473,19 +610,24 @@ export async function deleteFile(fileName, category, isDirectory = false) {
       : await getDirectory('files');
 
   await dir.removeEntry(fileName, { recursive: isDirectory });
-  notifySync();
+  const localPath = category === 'root' || category === null
+    ? fileName
+    : category ? `${normalizeLocalPath(category)}/${fileName}` : `files/${fileName}`;
+  notifyOpfsMutation(localPath, 'delete');
 }
 
 /**
  * Get a file as Blob.
  * @param {string} fileName
- * @param {string} category - 'root', 'messages', 'uploads', or directory name
+ * @param {string} category - 'root', 'sessions', 'uploads', or directory name
  * @returns {Promise<Blob>}
  */
 export async function getFileBlob(fileName, category) {
   const dir =
     category === 'root' || category === null
       ? await getRootDir()
+      : category === 'sessions'
+      ? await getDirectory('sessions')
       : category === 'messages'
       ? await getDirectory('messages')
       : category === 'files'
@@ -506,8 +648,7 @@ export async function getFileBlob(fileName, category) {
  */
 export async function createFile(fileName, dirName) {
   const dir = dirName ? await getDirectory(...pathParts(dirName)) : await getRootDir();
-  await writeText(dir, fileName, '');
-  notifySync();
+  await writeText(dir, fileName, '', { localPath: dirName ? `${normalizeLocalPath(dirName)}/${fileName}` : fileName });
 }
 
 /**
@@ -519,7 +660,7 @@ export async function createFile(fileName, dirName) {
 export async function createDirectory(dirName, parentDirName) {
   const parentDir = parentDirName ? await getDirectory(...pathParts(parentDirName)) : await getRootDir();
   await parentDir.getDirectoryHandle(dirName, { create: true });
-  notifySync();
+  notifyOpfsMutation(parentDirName ? `${normalizeLocalPath(parentDirName)}/${dirName}` : dirName, 'mkdir');
 }
 
 /**
@@ -544,8 +685,7 @@ export async function readFileContent(fileName, dirName) {
  */
 export async function saveFileContent(fileName, content, dirName) {
   const dir = dirName ? await getDirectory(...pathParts(dirName)) : await getRootDir();
-  await writeText(dir, fileName, content);
-  notifySync();
+  await writeText(dir, fileName, content, { localPath: dirName ? `${normalizeLocalPath(dirName)}/${fileName}` : fileName });
 }
 
 // ─── Memory Operations ────────────────────────────────────────────────────────
@@ -575,8 +715,7 @@ export async function readMemoryFile(filename) {
  */
 export async function writeMemoryFile(filename, content) {
   const dir = await getDirectory(MEMORY_DIR);
-  await writeText(dir, filename, content);
-  notifySync();
+  await writeText(dir, filename, content, { localPath: `${MEMORY_DIR}/${filename}` });
 }
 
 /**
@@ -587,7 +726,7 @@ export async function deleteMemoryFile(filename) {
   try {
     const dir = await getDirectory(MEMORY_DIR);
     await deleteEntry(dir, filename);
-    notifySync();
+    notifyOpfsMutation(`${MEMORY_DIR}/${filename}`, 'delete');
   } catch { /* ignore */ }
 }
 
@@ -645,8 +784,7 @@ export async function readSkillFile(skillName, filename) {
  */
 export async function writeSkillFile(skillName, filename, content) {
   const dir = await getDirectory(SKILLS_DIR, skillName);
-  await writeText(dir, filename, content);
-  notifySync();
+  await writeText(dir, filename, content, { localPath: `${SKILLS_DIR}/${skillName}/${filename}` });
 }
 
 /**
@@ -657,7 +795,7 @@ export async function deleteSkillDir(skillName) {
   try {
     const dir = await getDirectory(SKILLS_DIR);
     await dir.removeEntry(skillName, { recursive: true });
-    notifySync();
+    notifyOpfsMutation(`${SKILLS_DIR}/${skillName}`, 'delete');
   } catch { /* ignore */ }
 }
 
@@ -773,8 +911,8 @@ export async function readAgentAgentsFile(agentId) {
  */
 export async function writeAgentAgentsFile(agentId, content) {
   const dir = await getAgentDir(agentId);
-  await writeText(dir, 'AGENTS.md', content);
-  notifySync();
+  const name = await resolveWorkspaceName(agentId);
+  await writeText(dir, 'AGENTS.md', content, { localPath: `${WORKSPACE_DIR}/${name}/AGENTS.md` });
 }
 
 // Agent-scoped memory operations
@@ -790,15 +928,16 @@ export async function readAgentMemoryFile(agentId, filename) {
 
 export async function writeAgentMemoryFile(agentId, filename, content) {
   const dir = await getAgentMemoryDir(agentId);
-  await writeText(dir, filename, content);
-  notifySync();
+  const name = await resolveWorkspaceName(agentId);
+  await writeText(dir, filename, content, { localPath: `${WORKSPACE_DIR}/${name}/memory/${filename}` });
 }
 
 export async function deleteAgentMemoryFile(agentId, filename) {
   try {
     const dir = await getAgentMemoryDir(agentId);
     await deleteEntry(dir, filename);
-    notifySync();
+    const name = await resolveWorkspaceName(agentId);
+    notifyOpfsMutation(`${WORKSPACE_DIR}/${name}/memory/${filename}`, 'delete');
   } catch { /* ignore */ }
 }
 
@@ -830,16 +969,17 @@ export async function readAgentSkillFile(agentId, skillName, filename) {
 export async function writeAgentSkillFile(agentId, skillName, filename, content) {
   const dir = await getAgentSkillsDir(agentId);
   const skillDir = await dir.getDirectoryHandle(skillName, { create: true });
-  await writeText(skillDir, filename, content);
-  notifySync();
+  const name = await resolveWorkspaceName(agentId);
+  await writeText(skillDir, filename, content, { localPath: `${WORKSPACE_DIR}/${name}/skills/${skillName}/${filename}` });
 }
 
 export async function deleteAgentSkillDir(agentId, skillName) {
   try {
     const dir = await getAgentSkillsDir(agentId);
     await dir.removeEntry(skillName, { recursive: true });
+    const name = await resolveWorkspaceName(agentId);
+    notifyOpfsMutation(`${WORKSPACE_DIR}/${name}/skills/${skillName}`, 'delete');
   } catch { /* ignore */ }
-    notifySync();
 }
 
 // Agent-scoped file operations
@@ -886,8 +1026,8 @@ export async function writeAgentFile(agentId, path, content) {
   const dir = parts.length > 0
     ? await getAgentDir(agentId, 'files', ...parts)
     : await getAgentFilesDir(agentId);
-  await writeText(dir, fileName, content);
-  notifySync();
+  const name = await resolveWorkspaceName(agentId);
+  await writeText(dir, fileName, content, { localPath: `${WORKSPACE_DIR}/${name}/files/${normalizeLocalPath(path)}` });
 }
 
 export async function createAgentFile(agentId, path, isDirectory = false) {
@@ -898,10 +1038,12 @@ export async function createAgentFile(agentId, path, isDirectory = false) {
     : await getAgentFilesDir(agentId);
   if (isDirectory) {
     await dir.getDirectoryHandle(name, { create: true });
+    const workspaceName = await resolveWorkspaceName(agentId);
+    notifyOpfsMutation(`${WORKSPACE_DIR}/${workspaceName}/files/${normalizeLocalPath(path)}`, 'mkdir');
   } else {
-    await writeText(dir, name, '');
+    const workspaceName = await resolveWorkspaceName(agentId);
+    await writeText(dir, name, '', { localPath: `${WORKSPACE_DIR}/${workspaceName}/files/${normalizeLocalPath(path)}` });
   }
-  notifySync();
 }
 
 export async function deleteAgentFile(agentId, path) {
@@ -912,40 +1054,7 @@ export async function deleteAgentFile(agentId, path) {
     : await getAgentFilesDir(agentId);
   try {
     await dir.removeEntry(name, { recursive: true });
-    notifySync();
+    const workspaceName = await resolveWorkspaceName(agentId);
+    notifyOpfsMutation(`${WORKSPACE_DIR}/${workspaceName}/files/${normalizeLocalPath(path)}`, 'delete');
   } catch { /* ignore */ }
-}
-
-// ─── Sync Helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Recursively collect all files in OPFS with their content.
- * Used by the sync system for full and incremental sync.
- * @returns {Promise<Array<{path: string, content: string, size: number}>>}
- */
-export async function listAllFiles() {
-  const root = await getRootDir();
-  const files = [];
-
-  async function collect(dir, prefix = '') {
-    for (const { name, kind } of await listEntries(dir)) {
-      const path = prefix ? `${prefix}/${name}` : name;
-      if (kind === 'file') {
-        let content = '';
-        let size = 0;
-        try {
-          content = await readText(dir, name) ?? '';
-          size = content.length;
-        } catch {
-          // binary file, skip content
-        }
-        files.push({ path, content, size });
-      } else {
-        await collect(await dir.getDirectoryHandle(name), path);
-      }
-    }
-  }
-
-  await collect(root);
-  return files;
 }

@@ -23,6 +23,7 @@
  */
 
 import yaml from 'js-yaml';
+import { notifyOpfsMutation } from '../vfs/opfs.js';
 
 // ─── OPFS helpers ───────────────────────────────────────────────────────────
 
@@ -49,6 +50,7 @@ async function writeFile(dirHandle, filename, text) {
   const writable = await fh.createWritable();
   await writable.write(text);
   await writable.close();
+  notifyOpfsMutation(filename, 'write');
 }
 
 // ─── In-memory state ────────────────────────────────────────────────────────
@@ -207,6 +209,7 @@ const config = {
     try {
       const dir = await getRootDir();
       await dir.removeEntry(CONFIG_FILE);
+      notifyOpfsMutation(CONFIG_FILE, 'delete');
     } catch {
       // ignore
     }

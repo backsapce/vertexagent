@@ -7,12 +7,12 @@
  * - Head protection: always keep system prompt + first 2 user/assistant exchanges
  * - Sliding window: keep the most recent N messages (default ~20)
  * - Summary injection: if messages were dropped between head and tail,
- *   call llm.chatComplete() to generate a summary, inject before tail
+ *   call llm.completeSession() to generate a summary, inject before tail
  *
  * Usage:
  *   import { buildContext } from './agent/context';
  *   const { messages, systemPrompt } = await buildContext({
- *     messages: chatMessages,
+ *     messages: sessionMessages,
  *     systemPrompt: baseSystemPrompt,
  *     memorySnapshot: { memory, user },
  *     skillsList: '...',
@@ -133,7 +133,7 @@ export async function summarizeMiddle(middleMessages, existingSummary) {
       formatMessages(middleMessages);
 
   try {
-    const summary = await llm.chatComplete(
+    const summary = await llm.completeSession(
       [{ role: 'user', content: prompt }],
       { maxTokens: 300 }
     );

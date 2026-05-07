@@ -1,4 +1,4 @@
-.chat-list {
+.session-list {
   width: 280px;
   background: color-mix(in srgb, var(--color-sidebar) 94%, transparent);
   border-right: 1px solid var(--color-border);
@@ -11,7 +11,7 @@
   backdrop-filter: blur(18px);
 }
 
-.chat-list-inner {
+.session-list-inner {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -20,14 +20,14 @@
 }
 
 /* Collapsed state (PC mode) */
-.chat-list.collapsed {
+.session-list.collapsed {
   width: 0 !important;
   min-width: 0 !important;
   border-right: none;
 }
 
 /* Collapse/expand toggle button - positioned on right border center */
-.chat-list-collapse-btn {
+.session-list-collapse-btn {
   position: absolute;
   top: 50%;
   right: -14px;
@@ -48,14 +48,14 @@
   box-shadow: 0 8px 20px var(--color-shadow-soft);
 }
 
-.chat-list-collapse-btn:hover {
+.session-list-collapse-btn:hover {
   background: var(--color-surface-alt);
   border-color: var(--color-border-focus);
   color: var(--color-accent);
 }
 
 /* Mobile overlay mode */
-.chat-list-overlay {
+.session-list-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -65,12 +65,12 @@
   transform: translateX(-100%);
 }
 
-.chat-list-overlay.open {
+.session-list-overlay.open {
   transform: translateX(0);
 }
 
 /* Overlay backdrop */
-.chat-list-backdrop {
+.session-list-backdrop {
   position: fixed;
   top: 0;
   left: 0;
@@ -83,13 +83,13 @@
   transition: opacity 0.3s ease;
 }
 
-.chat-list-backdrop.show {
+.session-list-backdrop.show {
   opacity: 1;
   pointer-events: auto;
 }
 
 /* Mobile header toggle button */
-.chat-list-toggle-btn {
+.session-list-toggle-btn {
   display: none;
   position: fixed;
   top: 12px;
@@ -108,23 +108,23 @@
   transition: background 0.2s, border-color 0.2s;
 }
 
-.chat-list-toggle-btn:hover {
+.session-list-toggle-btn:hover {
   background: var(--color-surface-alt);
   border-color: var(--color-border-focus);
 }
 
-.chat-list-toggle-btn.open {
+.session-list-toggle-btn.open {
   left: 292px;
 }
 
 /* Responsive breakpoints */
 @media (max-width: 768px) {
-  .chat-list-toggle-btn {
+  .session-list-toggle-btn {
     display: flex;
     box-shadow: 0 8px 22px var(--color-shadow-soft);
   }
 
-  .chat-list {
+  .session-list {
     position: fixed;
     top: 0;
     left: 0;
@@ -136,16 +136,34 @@
     box-shadow: 2px 0 12px var(--color-shadow);
   }
 
-  .chat-list.mobile-open {
+  .session-list.mobile-open {
     transform: translateX(0);
   }
 
-  .chat-list-resize-handle {
+  .session-list-resize-handle {
     display: none;
+  }
+
+  .session-item {
+    padding-right: 10px;
+  }
+
+  .session-item-delete {
+    width: 30px;
+    height: 30px;
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
-.chat-list-header {
+@media (hover: none), (pointer: coarse) {
+  .session-item-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.session-list-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -153,7 +171,7 @@
   border-bottom: 1px solid var(--color-border);
 }
 
-.chat-list-header h2 {
+.session-list-header h2 {
   margin: 0;
   font-size: 17px;
   font-weight: 700;
@@ -163,7 +181,7 @@
   overflow: hidden;
 }
 
-.new-chat-btn {
+.new-session-btn {
   background: var(--color-primary);
   border: none;
   border-radius: 8px;
@@ -178,18 +196,18 @@
   box-shadow: 0 8px 18px color-mix(in srgb, var(--color-primary) 26%, transparent);
 }
 
-.new-chat-btn:hover {
+.new-session-btn:hover {
   background: var(--color-primary-hover);
   transform: translateY(-1px);
 }
 
-.chat-list-items {
+.session-list-items {
   flex: 1;
   overflow-y: auto;
   padding: 10px;
 }
 
-.chat-item {
+.session-item {
   padding: 11px 12px;
   border-radius: 8px;
   cursor: pointer;
@@ -199,25 +217,25 @@
   border: 1px solid transparent;
 }
 
-.chat-item:hover {
+.session-item:hover {
   background: color-mix(in srgb, var(--color-surface-alt) 72%, transparent);
   border-color: color-mix(in srgb, var(--color-border-subtle) 70%, transparent);
 }
 
-.chat-item.active {
+.session-item.active {
   background: var(--color-sidebar-active);
   border-color: color-mix(in srgb, var(--color-accent-strong) 38%, var(--color-border));
   box-shadow: inset 3px 0 0 var(--color-accent-strong);
 }
 
-.chat-item-row {
+.session-item-row {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.chat-item-delete {
-  display: none;
+.session-item-delete {
+  display: flex;
   background: transparent;
   border: none;
   color: var(--color-text-tertiary);
@@ -229,19 +247,23 @@
   cursor: pointer;
   border-radius: 6px;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  opacity: 0;
+  pointer-events: none;
+  transition: color 0.15s, background 0.15s, opacity 0.15s;
 }
 
-.chat-item:hover .chat-item-delete {
-  display: flex;
+.session-item:hover .session-item-delete,
+.session-item:focus-within .session-item-delete {
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.chat-item-delete:hover {
+.session-item-delete:hover {
   color: var(--color-error);
   background: color-mix(in srgb, var(--color-error) 12%, transparent);
 }
 
-.chat-item-title {
+.session-item-title {
   flex: 1;
   min-width: 0;
   font-size: 14px;
@@ -255,7 +277,7 @@
   gap: 6px;
 }
 
-.chat-agent-badge {
+.session-agent-badge {
   font-size: 10px;
   font-weight: 600;
   color: var(--color-accent-strong);
@@ -268,7 +290,7 @@
   text-overflow: ellipsis;
 }
 
-.chat-item-preview {
+.session-item-preview {
   font-size: 12px;
   color: var(--color-text-secondary);
   margin-top: 4px;
@@ -277,13 +299,13 @@
   text-overflow: ellipsis;
 }
 
-.chat-item-time {
+.session-item-time {
   font-size: 11px;
   color: var(--color-text-tertiary);
   margin-top: 4px;
 }
 
-.chat-list-empty {
+.session-list-empty {
   text-align: center;
   padding: 44px 18px;
   color: var(--color-text-tertiary);
@@ -292,12 +314,12 @@
   margin: 10px 2px;
 }
 
-.chat-list-empty p {
+.session-list-empty p {
   margin: 4px 0;
   font-size: 13px;
 }
 
-.chat-list-resize-handle {
+.session-list-resize-handle {
   position: absolute;
   top: 0;
   right: 0;
@@ -308,11 +330,11 @@
   transition: background 0.2s;
 }
 
-.chat-list-resize-handle:hover,
-.chat-list-resize-handle.resizing {
+.session-list-resize-handle:hover,
+.session-list-resize-handle.resizing {
   background: var(--color-accent-strong);
 }
 
-.chat-list-resize-handle.resizing {
+.session-list-resize-handle.resizing {
   opacity: 0.5;
 }

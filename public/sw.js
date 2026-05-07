@@ -9,6 +9,8 @@
 
 const CACHE_NAME = 'vertex-agent-v1';
 const BASE = '/';  // replaced at build time with GH_PAGES_BASE (e.g. '/VertexAgent/')
+const DEV_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const IS_DEV_HOST = DEV_HOSTS.has(self.location.hostname);
 
 // App shell files to precache — use absolute URLs so they resolve correctly
 // regardless of where the SW is registered (dev vs GH Pages).
@@ -18,6 +20,47 @@ const APP_SHELL = [
   self.location.origin + BASE + 'favicon.svg',
   self.location.origin + BASE + 'manifest.json',
 ];
+
+async function cacheResponse(request, response) {
+  if (!response || !response.ok) return response;
+
+  const clone = response.clone();
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(request, clone);
+  } catch (err) {
+    console.warn('[SW] cache put failed:', request.url, err);
+  }
+
+  return response;
+}
+
+async function matchCachedIndex() {
+  const cached = await caches.match(self.location.origin + BASE + 'index.html');
+  if (cached) return cached;
+
+  // Last resort: find any cached entry ending with index.html
+  for (const key of await caches.keys()) {
+    const cache = await caches.open(key);
+    const entries = await cache.keys();
+    for (const entry of entries) {
+      if (entry.url.endsWith('index.html')) {
+        return cache.match(entry);
+      }
+    }
+  }
+
+  return undefined;
+}
+
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    return cacheResponse(request, response);
+  } catch {
+    return caches.match(request);
+  }
+}
 
 // ── Install: precache app shell (non-atomic — skip failures so partial
 //    offline still works instead of caching nothing at all) ──────────────────
@@ -61,32 +104,30 @@ self.addEventListener('fetch', (event) => {
   // Let LLM API / agent calls pass through without caching
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/agent')) return;
+  if (url.pathname === '/agent' || url.pathname.startsWith('/agent/')) return;
+
+  // Vite dev serves source modules and HMR clients as same-origin files.
+  // Keep dev fresh with network-first, but fall back to the previous cache
+  // so an installed/open PWA can still load after the dev server stops.
+  if (IS_DEV_HOST) {
+    event.respondWith(
+      networkFirst(request).then(async (response) => {
+        if (response) return response;
+        if (request.mode === 'navigate') return matchCachedIndex();
+        return fetch(request);
+      })
+    );
+    return;
+  }
 
   // Navigation requests (HTML pages) — network first, fallback to cached
   // index.html so the SPA loads regardless of the URL path
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          return response;
-        })
+        .then((response) => cacheResponse(request, response))
         .catch(async () => {
-          // Try exact index.html path first, then search all caches
-          const cached = await caches.match(self.location.origin + BASE + 'index.html');
-          if (cached) return cached;
-          // Last resort: find any cached entry ending with index.html
-          for (const key of await caches.keys()) {
-            const cache = await caches.open(key);
-            const entries = await cache.keys();
-            for (const entry of entries) {
-              if (entry.url.endsWith('index.html')) {
-                return cache.match(entry);
-              }
-            }
-          }
+          return matchCachedIndex();
         })
     );
     return;
@@ -96,14 +137,7 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
-      return fetch(request).then((response) => {
-        // Only cache successful responses
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        }
-        return response;
-      });
+      return fetch(request).then((response) => cacheResponse(request, response));
     })
   );
 });

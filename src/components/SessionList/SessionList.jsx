@@ -1,12 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useI18n } from '../../i18n/context';
 import { Plus, X, Menu, ChevronLeft, ChevronRight } from '../Icons/Icons';
-import './ChatList.css';
+import './SessionList.css';
 
 // Breakpoint for mobile/tablet
 const MOBILE_BREAKPOINT = 768;
 
-const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, collapsed = false, onToggleCollapse, chatAgents = {}, agentList = [] }) => {
+const SessionList = ({ sessions, activeSessionId, onSelectSession, onNewSession, onDeleteSession, collapsed = false, onToggleCollapse, sessionAgents = {}, agentList = [] }) => {
   const { t } = useI18n();
   const [width, setWidth] = useState(280);
   const [isResizing, setIsResizing] = useState(false);
@@ -28,20 +28,16 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, 
     return () => window.removeEventListener('resize', checkScreen);
   }, []);
 
-  // Close mobile panel on chat select
-  const handleSelectChat = useCallback((chatId) => {
-    onSelectChat(chatId);
-    if (isMobile) {
-      setMobileOpen(false);
-    }
-  }, [onSelectChat, isMobile]);
+  const handleSelectSession = useCallback((sessionId) => {
+    onSelectSession(sessionId);
+  }, [onSelectSession]);
 
-  const handleNewChat = useCallback(() => {
+  const handleNewSession = useCallback(() => {
     if (isMobile) {
       setMobileOpen(false);
     }
-    onNewChat();
-  }, [isMobile, onNewChat]);
+    onNewSession();
+  }, [isMobile, onNewSession]);
 
   const handleMouseDown = useCallback((e) => {
     e.preventDefault();
@@ -100,75 +96,76 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, 
     <>
       {/* Toggle button - visible only on mobile */}
       <button
-        className={`chat-list-toggle-btn ${mobileOpen ? 'open' : ''}`}
+        className={`session-list-toggle-btn ${mobileOpen ? 'open' : ''}`}
         onClick={toggleMobile}
-        aria-label="Toggle chat list"
+        aria-label="Toggle session list"
       >
         <Menu width={20} height={20} />
       </button>
 
       {/* Backdrop */}
       {isMobile && mobileOpen && (
-        <div className="chat-list-backdrop show" onClick={() => setMobileOpen(false)} />
+        <div className="session-list-backdrop show" onClick={() => setMobileOpen(false)} />
       )}
 
-      {/* Chat list panel */}
+      {/* Session list panel */}
       <div
         ref={panelRef}
-        className={`chat-list ${isMobile && mobileOpen ? 'mobile-open' : ''} ${!isMobile && collapsed ? 'collapsed' : ''}`}
+        className={`session-list ${isMobile && mobileOpen ? 'mobile-open' : ''} ${!isMobile && collapsed ? 'collapsed' : ''}`}
         style={!isMobile ? { width: collapsed ? 0 : width, minWidth: collapsed ? 0 : width } : {}}
       >
-        <div className="chat-list-inner">
-          <div className="chat-list-header">
+        <div className="session-list-inner">
+          <div className="session-list-header">
             <h2>{t('app.name')}</h2>
-            <button className="new-chat-btn" onClick={handleNewChat} title={t('chat.newChat')}>
+            <button className="new-session-btn" onClick={handleNewSession} title={t('session.newSession')}>
               <Plus width={20} height={20} />
             </button>
           </div>
-          <div className="chat-list-items">
-            {chats.map((chat) => (
+          <div className="session-list-items">
+            {sessions.map((session) => (
               <div
-                key={chat.id}
-                className={`chat-item ${chat.id === activeChatId ? 'active' : ''}`}
-                onClick={() => handleSelectChat(chat.id)}
+                key={session.id}
+                className={`session-item ${session.id === activeSessionId ? 'active' : ''}`}
+                onClick={() => handleSelectSession(session.id)}
               >
-                <div className="chat-item-row">
-                  <div className="chat-item-title">
-                    {chat.title}
-                    {chatAgents[chat.id] && (
-                      <span className="chat-agent-badge">
+                <div className="session-item-row">
+                  <div className="session-item-title">
+                    {session.title}
+                    {sessionAgents[session.id] && (
+                      <span className="session-agent-badge">
                         {(() => {
-                          const agent = agentList.find((a) => a.id === chatAgents[chat.id]);
-                          return agent ? agent.name : chatAgents[chat.id];
+                          const agent = agentList.find((a) => a.id === sessionAgents[session.id]);
+                          return agent ? agent.name : sessionAgents[session.id];
                         })()}
                       </span>
                     )}
                   </div>
                   <button
-                    className="chat-item-delete"
-                    title={t('chat.deleteChat')}
+                    className="session-item-delete"
+                    title={t('session.deleteSession')}
+                    aria-label={t('session.deleteSession')}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDeleteChat(chat.id);
+                      onDeleteSession(session.id);
                     }}
                   >
                     <X width={14} height={14} />
                   </button>
                 </div>
-                <div className="chat-item-preview">{chat.lastMessage || t('chat.noMessages')}</div>
-                <div className="chat-item-time">{chat.updatedAt}</div>
+                <div className="session-item-preview">{session.lastMessage || t('session.noMessages')}</div>
+                <div className="session-item-time">{session.updatedAt}</div>
               </div>
             ))}
-            {chats.length === 0 && (
-              <div className="chat-list-empty">
-                <p>{t('chat.noConversations')}</p>
-                <p>{t('chat.clickToStart')}</p>
+            {sessions.length === 0 && (
+              <div className="session-list-empty">
+                <p>{t('session.noConversations')}</p>
+                <p>{t('session.clickToStart')}</p>
               </div>
             )}
           </div>
           {!isMobile && !collapsed && (
             <div
-              className={`chat-list-resize-handle ${isResizing ? 'resizing' : ''}`}
+              className={`session-list-resize-handle ${isResizing ? 'resizing' : ''}`}
               onMouseDown={handleMouseDown}
             />
           )}
@@ -176,9 +173,9 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, 
         {/* Collapse toggle button - PC mode only, positioned on right border (hidden when collapsed) */}
         {!isMobile && !collapsed && (
           <button
-            className="chat-list-collapse-btn"
+            className="session-list-collapse-btn"
             onClick={handleToggleCollapse}
-            aria-label="Collapse chat list"
+            aria-label="Collapse session list"
             title="Collapse"
           >
             <ChevronLeft width={14} height={14} />
@@ -189,4 +186,4 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, 
   );
 };
 
-export default ChatList;
+export default SessionList;

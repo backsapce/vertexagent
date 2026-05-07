@@ -10,14 +10,14 @@
  *     files/        — agent-scoped files for tool execution
  *
  * Global skills (vertex-agent/skills/) are shared across all agents.
- * Chats and messages remain global.
+ * Sessions and messages remain global.
  *
  * Usage:
  *   import { ensureDefaultAgent, listAgents, createAgent, getWorkspaceDir } from './agents/agents';
  */
 
-import config from '../config/config';
-import { writeAgentAgentsFile, readAgentAgentsFile } from '../vfs/opfs.js';
+import config from '../config/config.js';
+import { notifyOpfsMutation, writeAgentAgentsFile, readAgentAgentsFile } from '../vfs/opfs.js';
 
 const ROOT_DIR = 'vertex-agent';
 const WORKSPACE_DIR = 'workspace';
@@ -64,6 +64,12 @@ async function writeJSON(dirHandle, filename, data) {
   await writable.close();
 }
 
+async function writeWorkspaceJSON(agentId, filename, data) {
+  const wsDir = await getWorkspaceDir(agentId);
+  await writeJSON(wsDir, filename, data);
+  notifyOpfsMutation(`${WORKSPACE_DIR}/${agentId}/${filename}`, 'write');
+}
+
 /**
  * Get the workspace directory name for a given agent ID.
  * Uses the stable agent ID as the directory name (not the display name).
@@ -108,8 +114,7 @@ export async function ensureDefaultAgent() {
   await config.set('agentsList', [agent]);
 
   await ensureAgentWorkspace(id, id);
-  const wsDir = await getWorkspaceDir(id);
-  await writeJSON(wsDir, 'meta.json', agent);
+  await writeWorkspaceJSON(id, 'meta.json', agent);
 
   return id;
 }
@@ -148,8 +153,7 @@ export async function createAgent(name) {
   await config.set('agentsList', agents);
 
   await ensureAgentWorkspace(id, agentName);
-  const wsDir = await getWorkspaceDir(id);
-  await writeJSON(wsDir, 'meta.json', agent);
+  await writeWorkspaceJSON(id, 'meta.json', agent);
 
   return agent;
 }
@@ -168,8 +172,10 @@ export async function deleteAgent(id) {
     const root = await getRootDir();
     const wsDir = await root.getDirectoryHandle(WORKSPACE_DIR);
     await wsDir.removeEntry(id, { recursive: true });
+    notifyOpfsMutation(`${WORKSPACE_DIR}/${id}`, 'delete');
   } catch {
     // workspace may not exist
+    notifyOpfsMutation(`${WORKSPACE_DIR}/${id}`, 'delete');
   }
 }
 
@@ -189,7 +195,7 @@ export async function updateAgentName(id, name) {
     const wsDir = await getWorkspaceDir(id);
     const existing = await readJSON(wsDir, 'meta.json');
     if (existing) {
-      await writeJSON(wsDir, 'meta.json', { ...existing, name });
+      await writeWorkspaceJSON(id, 'meta.json', { ...existing, name });
     }
   } catch {
     // workspace may not exist yet
@@ -237,7 +243,7 @@ export async function updateAgentConfig(id, patch) {
     const wsDir = await getWorkspaceDir(id);
     const existing = await readJSON(wsDir, 'meta.json');
     if (existing) {
-      await writeJSON(wsDir, 'meta.json', normalizeAgent({ ...existing, ...patch }));
+      await writeWorkspaceJSON(id, 'meta.json', normalizeAgent({ ...existing, ...patch }));
     }
   } catch {
     // workspace may not exist yet

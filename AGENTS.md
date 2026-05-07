@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VertexAgent is a browser-based AI agent framework. It's a React SPA that connects to LLM providers (OpenAI, Anthropic, Gemini, OpenRouter, Qwen, custom OpenAI-compatible) for chat, with an autonomous agent loop for tool execution. All browser data is persisted in OPFS (Origin Private File System). Optionally supports E2B cloud sandboxes for remote execution.
+VertexAgent is a browser-based AI agent framework. It's a React SPA that connects to LLM providers (OpenAI, Anthropic, Gemini, OpenRouter, Qwen, custom OpenAI-compatible) for sessions, with an autonomous agent loop for tool execution. All browser data is persisted in OPFS (Origin Private File System). Optionally supports E2B cloud sandboxes for remote execution.
 
 ## Commands
 
@@ -21,10 +21,10 @@ VertexAgent is a browser-based AI agent framework. It's a React SPA that connect
 
 ### Core layers
 
-1. **React UI** (`src/components/`) — ChatList, MessagePanel, Settings, FileManage (editor + file browser), Icons
+1. **React UI** (`src/components/`) — SessionList, MessagePanel, Settings, FileManage (editor + file browser), Icons
 2. **Agent loop** (`src/agent/`) — autonomous multi-turn tool execution engine with context management, memory, and skills
 3. **LLM layer** (`src/models/`) — unified provider interface with streaming, native tool calling, 6 provider backends
-4. **Persistence** (`src/vfs/opfs.js`) — OPFS-backed virtual file system for chats, files, memory, and skills
+4. **Persistence** (`src/vfs/opfs.js`) — OPFS-backed virtual file system for sessions, files, memory, and skills
 5. **Agent server** (`server/agent.js`) — optional Node.js HTTP server for local shell command execution
 6. **E2B integration** (`src/models/e2b.js`) — cloud sandbox execution via E2B SDK
 
@@ -35,12 +35,12 @@ The agent system replaces the old `<execute>` XML tag parsing with native LLM to
 - **`loop.js`** — `runAgentLoop()` drives the multi-turn conversation: build context -> stream LLM with tool schemas -> execute tool calls -> feed results back -> repeat up to 10 rounds. Uses `tokenlens` for context window estimation with per-model overrides for Qwen variants. Accumulates usage stats across rounds.
 - **`context.js`** — `buildContext()` and `assembleApiMessages()` manage conversation context via sliding window (head protection + tail retention) with optional LLM-generated summaries of dropped messages. Compresses when usage exceeds 50% of the model's context window.
 - **`tools.js`** — Tool registry singleton with OpenAI function-calling schema format. Built-in tools: `execute_command`, `read_file`, `write_file`, `list_files`, `list_local_files`, `read_local_file`, `write_memory`, `read_memory`, `clear_memory`, `skills_list`, `skill_view`, `skill_manage`. Tools declare availability via `checkAvailable()` (e.g., file tools require `agentUrl`).
-- **`memory.js`** — Two bounded, file-backed stores in OPFS: `MEMORY.md` (agent notes, 2200 char limit) and `USER.md` (user profile, 1375 char limit). Entries delimited by `§`, oldest trimmed when over limit. Loaded once per chat session as a frozen snapshot, injected into system prompt.
+- **`memory.js`** — Two bounded, file-backed stores in OPFS: `MEMORY.md` (agent notes, 2200 char limit) and `USER.md` (user profile, 1375 char limit). Entries delimited by `§`, oldest trimmed when over limit. Loaded once per session as a frozen snapshot, injected into system prompt.
 - **`skills.js`** — File-based skills in OPFS `skills/` directory with progressive disclosure. Each skill has a `SKILL.md` with YAML frontmatter (name, description, version) and optional `references/` subdirectory. Tier 1: name+description in system prompt. Tier 2: full SKILL.md content on demand. Tier 3: reference files. Ships with `skill-creator` default skill. Skills can be enabled/disabled via config.
 
 ### LLM layer (`src/models/`)
 
-- **`llm.js`** — Unified LLM singleton. `chat()` returns an async generator of `{ content, reasoning, toolCalls, usage }` chunks. Supports native tool calling via `tools` option. `chatComplete()` convenience method for non-streaming. Settings persisted to OPFS via `settings.js`.
+- **`llm.js`** — Unified LLM singleton. `streamSession()` returns an async generator of `{ content, reasoning, toolCalls, usage }` chunks. Supports native tool calling via `tools` option. `completeSession()` convenience method for non-streaming. Settings persisted to OPFS via `settings.js`.
 - **`settings.js`** — Thin adapter over `config.js` for LLM settings (`llm` key in config.yaml).
 - **Providers** (`src/models/providers/`):
   - `openai.js` — OpenAI API, native tool calling
@@ -55,12 +55,12 @@ The agent system replaces the old `<execute>` XML tag parsing with native LLM to
 ### OPFS VFS (`src/vfs/opfs.js`)
 
 Root directory: `vertex-agent/`. Key subdirectories:
-- `chats.json` + `messages/<id>.json` — chat metadata and per-chat message files
+- `session.json` + `sessions/<id>.json` — session metadata and per-session message files
 - `memory/` — `MEMORY.md` and `USER.md` for agent memory
 - `skills/` — skill directories with `SKILL.md` and optional `references/`
 - `files/` — user-managed files
 
-Operations: chat CRUD, file manager (list/create/read/write/delete, nested dirs), zip export/import, memory read/write/delete, skill CRUD with reference file support.
+Operations: session CRUD, file manager (list/create/read/write/delete, nested dirs), zip export/import, memory read/write/delete, skill CRUD with reference file support.
 
 ### Config (`src/config/config.js`)
 
@@ -76,7 +76,7 @@ Service worker in `public/sw.js` with precache manifest injected at build time b
 
 ## Data flow
 
-1. User sends message -> messages accumulated in chat state
+1. User sends message -> messages accumulated in session state
 2. `runAgentLoop()` called -> loads memory snapshot + skills list -> assembles API messages with context window check
 3. LLM streams with tool schemas -> tool calls extracted from streaming fragments
 4. Tools dispatched via registry -> results fed back as `tool` role messages
