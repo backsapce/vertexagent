@@ -3,7 +3,15 @@
  */
 
 import config from '../config/config.js';
-import { listAllFiles, getRootDir, listEntries, readText, writeText, getDirectory } from '../vfs/opfs.js';
+import {
+  listAllFiles,
+  getRootDir,
+  listEntries,
+  readText,
+  writeIncomingText,
+  mergeIncomingTextContent,
+  getDirectory,
+} from '../vfs/opfs.js';
 import * as webdav from './webdav.js';
 import * as s3 from './s3Compatible.js';
 
@@ -110,15 +118,27 @@ async function fullSyncToWebdav(url, username, password) {
 
   // Upload all files
   let uploaded = 0;
+  let merged = 0;
   const total = files.length;
 
   for (const file of files) {
     await webdav.ensureDirectory(url, username, password, webdav.normalizeUrl(file.remotePath).substring(0, file.remotePath.lastIndexOf('/')));
-    await webdav.putFile(url, username, password, file.remotePath, file.content, getMimeType(file.remotePath));
+    const remoteContent = await readRemoteWebdavText(url, username, password, file.remotePath);
+    const result = mergeIncomingTextContent(remoteContent, file.content, toWebdavLocalPath(file.remotePath));
+    await webdav.putFile(url, username, password, file.remotePath, result.content, getMimeType(file.remotePath));
+    if (result.merged) merged++;
     uploaded++;
   }
 
-  return { uploaded, total };
+  return { uploaded, total, merged };
+}
+
+async function readRemoteWebdavText(url, username, password, remotePath) {
+  try {
+    return await webdav.getFileText(url, username, password, remotePath);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -132,71 +152,117 @@ export async function fullSyncFromServer(url, username, password, settingsOverri
 }
 
 async function fullSyncFromWebdav(url, username, password) {
-  const allEntries = await webdav.propfind(url, username, password, REMOTE_ROOT + '/', 2);
+  const allEntries = await collectWebdavEntries(url, username, password, REMOTE_ROOT + '/');
 
   let downloaded = 0;
+  let directories = 0;
+  let merged = 0;
 
   for (const entry of allEntries) {
-    if (!entry.isCollection && entry.href !== webdav.normalizeUrl(REMOTE_ROOT) + '/') {
-      // Strip the remote root prefix to get local OPFS path
-      let localPath = entry.href;
-      const normalizedRoot = webdav.normalizeUrl(REMOTE_ROOT);
-      if (localPath.startsWith(normalizedRoot + '/')) {
-        localPath = localPath.substring(normalizedRoot.length + 1);
-      } else if (localPath.startsWith(normalizedRoot)) {
-        localPath = localPath.substring(normalizedRoot.length);
-      }
+    const localPath = toWebdavLocalPath(entry.href);
+    if (!localPath) continue;
 
-      if (!localPath) continue;
+    if (entry.isCollection) {
+      await getDirectory(...localPath.split('/').filter(Boolean));
+      directories++;
+      continue;
+    }
 
-      const content = await webdav.getFileText(url, username, password, entry.href);
-      const parts = localPath.split('/');
-      const fileName = parts.pop();
+    const content = await webdav.getFileText(url, username, password, entry.href);
+    const result = await writeLocalFile(localPath, content);
+    if (result.merged) merged++;
+    downloaded++;
+  }
 
-      if (parts.length > 0) {
-        await getDirectory(...parts);
-      }
+  return { downloaded, directories, merged };
+}
 
-      const dir = parts.length > 0 ? await getDirectory(...parts) : await getRootDir();
-      await writeText(dir, fileName, content);
-      downloaded++;
+async function collectWebdavEntries(url, username, password, remotePath) {
+  const entries = await webdav.propfind(url, username, password, remotePath, 1);
+  const collected = [];
+  const normalizedPath = webdav.normalizeUrl(remotePath);
+
+  for (const entry of entries) {
+    if (webdav.normalizeUrl(entry.href) === normalizedPath) continue;
+
+    collected.push(entry);
+    if (entry.isCollection) {
+      collected.push(...await collectWebdavEntries(url, username, password, entry.href));
     }
   }
 
-  return { downloaded };
+  return collected;
+}
+
+function toWebdavLocalPath(remotePath) {
+  let localPath = remotePath;
+  const normalizedRoot = webdav.normalizeUrl(REMOTE_ROOT);
+  if (localPath.startsWith(normalizedRoot + '/')) {
+    localPath = localPath.substring(normalizedRoot.length + 1);
+  } else if (localPath.startsWith(normalizedRoot)) {
+    localPath = localPath.substring(normalizedRoot.length);
+  }
+  return localPath.replace(/^\/+|\/+$/g, '');
 }
 
 async function fullSyncToS3(s3Settings) {
   await s3.assertPrefixExists(s3Settings);
   const files = await getLocalFileSnapshot();
   let uploaded = 0;
+  let merged = 0;
 
   for (const file of files) {
-    await s3.putObject(s3Settings, file.localPath, file.content, getMimeType(file.localPath));
+    const remoteContent = await readRemoteS3Text(s3Settings, file.localPath);
+    const result = mergeIncomingTextContent(remoteContent, file.content, file.localPath);
+    await s3.putObject(s3Settings, file.localPath, result.content, getMimeType(file.localPath));
+    if (result.merged) merged++;
     uploaded++;
   }
 
-  return { uploaded, total: files.length };
+  return { uploaded, total: files.length, merged };
+}
+
+async function readRemoteS3Text(s3Settings, localPath) {
+  try {
+    return await s3.getObjectText(s3Settings, localPath);
+  } catch {
+    return null;
+  }
 }
 
 async function fullSyncFromS3(s3Settings) {
   await s3.assertPrefixExists(s3Settings);
   const objects = await s3.listObjects(s3Settings);
   let downloaded = 0;
+  let directories = 0;
+  let merged = 0;
 
   for (const object of objects) {
     const localPath = s3.toLocalPath(s3Settings, object.key);
     if (!localPath) continue;
 
+    if (localPath.endsWith('/')) {
+      await getDirectory(...localPath.split('/').filter(Boolean));
+      directories++;
+      continue;
+    }
+
     const content = await s3.getObjectText(s3Settings, localPath);
-    const parts = localPath.split('/').filter(Boolean);
-    const fileName = parts.pop();
-    const dir = parts.length > 0 ? await getDirectory(...parts) : await getRootDir();
-    await writeText(dir, fileName, content);
+    const result = await writeLocalFile(localPath, content);
+    if (result.merged) merged++;
     downloaded++;
   }
 
-  return { downloaded };
+  return { downloaded, directories, merged };
+}
+
+async function writeLocalFile(localPath, content) {
+  const parts = localPath.split('/').filter(Boolean);
+  const fileName = parts.pop();
+  if (!fileName) return { merged: false };
+
+  const dir = parts.length > 0 ? await getDirectory(...parts) : await getRootDir();
+  return writeIncomingText(dir, fileName, content, localPath);
 }
 
 /**
@@ -247,7 +313,9 @@ async function incrementalSyncWebdav(url, username, password, cachedSnapshot, se
         const remotePath = `${REMOTE_ROOT}/${path}`;
         const dirPart = remotePath.substring(0, remotePath.lastIndexOf('/'));
         await webdav.ensureDirectory(url, username, password, dirPart);
-        await webdav.putFile(url, username, password, remotePath, file.content, getMimeType(remotePath));
+        const remoteContent = await readRemoteWebdavText(url, username, password, remotePath);
+        const result = mergeIncomingTextContent(remoteContent, file.content, path);
+        await webdav.putFile(url, username, password, remotePath, result.content, getMimeType(remotePath));
         changes.uploaded++;
       } catch (err) {
         changes.errors.push({ path, error: err.message });
@@ -296,7 +364,9 @@ async function incrementalSyncS3(s3Settings, cachedSnapshot, setCachedSnapshot) 
     const cached = cachedMap.get(path);
     if (!cached || cached.content !== file.content || cached.size !== file.size) {
       try {
-        await s3.putObject(s3Settings, path, file.content, getMimeType(path));
+        const remoteContent = await readRemoteS3Text(s3Settings, path);
+        const result = mergeIncomingTextContent(remoteContent, file.content, path);
+        await s3.putObject(s3Settings, path, result.content, getMimeType(path));
         changes.uploaded++;
       } catch (err) {
         changes.errors.push({ path, error: err.message });

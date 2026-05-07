@@ -1,4 +1,4 @@
-import { formatMultimodal, readSSE } from './shared.js';
+import { formatMultimodal, formatOpenAITools, readSSE } from './shared.js';
 
 /**
  * OpenRouter provider.
@@ -48,7 +48,7 @@ export default {
 
     // Tool calling support
     if (opts.tools?.length) {
-      body.tools = opts.tools;
+      body.tools = formatOpenAITools(opts.tools);
     }
 
     const res = await fetch(`${baseUrl}/chat/completions`, {

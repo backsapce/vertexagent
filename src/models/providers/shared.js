@@ -8,13 +8,50 @@
  */
 export function formatMultimodal(messages) {
   return messages.map((msg) => {
-    if (!msg.images?.length) return { role: msg.role, content: msg.content };
+    if (!msg.images?.length) {
+      const formatted = { role: msg.role, content: msg.content };
+      if (msg.tool_call_id) formatted.tool_call_id = msg.tool_call_id;
+      if (msg.name) formatted.name = msg.name;
+      if (msg.tool_calls?.length) {
+        formatted.tool_calls = msg.tool_calls.map((tc) => {
+          if (tc.type === 'function' && tc.function) return tc;
+          return {
+            id: tc.id,
+            type: 'function',
+            function: {
+              name: tc.name,
+              arguments: tc.arguments || '{}',
+            },
+          };
+        });
+      }
+      return formatted;
+    }
     return {
       role: msg.role,
       content: [
         ...msg.images.map((img) => ({ type: 'image_url', image_url: { url: img.dataUrl } })),
         ...(msg.content ? [{ type: 'text', text: msg.content }] : []),
       ],
+    };
+  });
+}
+
+/**
+ * Convert internal function schemas to OpenAI-compatible tool objects.
+ * Internal tools are { name, description, parameters }; OpenAI-compatible
+ * chat completions APIs expect { type: 'function', function: ... }.
+ */
+export function formatOpenAITools(tools = []) {
+  return tools.map((tool) => {
+    if (tool.type === 'function' && tool.function) return tool;
+    return {
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
     };
   });
 }

@@ -1,6 +1,7 @@
-import { lazy, Suspense, useState, useRef, useEffect } from 'react';
+import { forwardRef, lazy, Suspense, useImperativeHandle, useState, useRef, useEffect, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
-import { ChevronRight, Settings as SettingsIcon, Folder, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud, User } from '../Icons/Icons';
+import { getAgentDir } from '../../vfs/opfs';
+import { ChevronRight, Settings as SettingsIcon, Folder, File, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud, User } from '../Icons/Icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
@@ -10,6 +11,72 @@ const Settings = lazy(() => import('../Settings/Settings'));
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4 MB target (well under 10 MB API limit)
 const MAX_DIMENSION = 2048;
+
+function getMentionRange(value, caret) {
+  const head = value.slice(0, caret);
+  const start = head.lastIndexOf('@');
+  if (start === -1) return null;
+  if (start > 0 && !/\s/.test(value[start - 1])) return null;
+  const query = value.slice(start + 1, caret);
+  if (/\s/.test(query)) return null;
+  return { start, end: caret, query };
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function estimateTokensFromText(text) {
+  return Math.ceil((text?.length || 0) / 4);
+}
+
+async function collectAgentWorkspaceFiles(agentId) {
+  if (!agentId) return [];
+  const root = await getAgentDir(agentId);
+  const files = [];
+
+  async function walk(dir, prefix = '') {
+    for await (const [name, handle] of dir) {
+      const relativePath = prefix ? `${prefix}/${name}` : name;
+      if (handle.kind === 'directory') {
+        await walk(handle, relativePath);
+      } else {
+        const file = await handle.getFile();
+        files.push({
+          name,
+          relativePath,
+          displayPath: `/workspace/${agentId}/${relativePath}`,
+          size: file.size,
+          lastModified: file.lastModified,
+        });
+      }
+    }
+  }
+
+  await walk(root);
+  return files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+}
+
+async function readAgentWorkspaceFile(agentId, relativePath) {
+  const parts = relativePath.split('/').filter(Boolean);
+  const fileName = parts.pop();
+  const dir = parts.length > 0 ? await getAgentDir(agentId, ...parts) : await getAgentDir(agentId);
+  const fileHandle = await dir.getFileHandle(fileName);
+  const file = await fileHandle.getFile();
+  return file.text();
+}
+
+function buildDisplayMessageWithFileRefs(text, files) {
+  if (!files.length) return text;
+  const totalTokens = files.reduce((sum, file) => sum + estimateTokensFromText(file.content), 0);
+  const refs = files
+    .map((file) => `- ${file.displayPath} (${formatBytes(file.size)}, ~${estimateTokensFromText(file.content)} tokens)`)
+    .join('\n');
+  return `${text}\n\nReferenced files: ${files.length} (~${totalTokens} tokens)\n${refs}`.trim();
+}
 
 /**
  * Compress / resize an image file so the resulting data-URL stays under the API limit.
@@ -221,15 +288,19 @@ const ToolBlock = ({ toolCall }) => {
   );
 };
 
-const MessagePanel = ({
+const MessagePanel = forwardRef(({
   messages,
   onSendMessage,
   onRetry,
   streaming,
   onStopStreaming,
   llmConfig,
+  llmProfiles,
+  activeLlmProfileId,
+  onSelectLLM,
   providers,
   onConfigureLLM,
+  onDeleteLLM,
   onFetchModels,
   theme,
   onThemeChange,
@@ -243,30 +314,101 @@ const MessagePanel = ({
   onToggleFileManage,
   nickname,
   onNicknameChange,
+  avatar,
+  onAvatarChange,
   agentList,
   agentId,
   onAgentChange,
   onAgentListChange,
   activeChatId,
-}) => {
+  onStorageRestored,
+}, ref) => {
   const { t } = useI18n();
   const [input, setInput] = useState('');
   const [pendingImages, setPendingImages] = useState([]); // [{dataUrl, name}]
+  const [pendingContextFiles, setPendingContextFiles] = useState([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionRange, setMentionRange] = useState(null);
+  const [mentionFiles, setMentionFiles] = useState([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionError, setMentionError] = useState('');
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const assistantName = nickname?.trim() || t('message.assistant');
+  const assistantInitial = Array.from(assistantName)[0]?.toUpperCase() || 'V';
+  const selectedAgent = agentList.find((agent) => agent.id === agentId) || agentList[0];
+
+  useImperativeHandle(ref, () => ({
+    focusInput() {
+      textareaRef.current?.focus({ preventScroll: true });
+    },
+  }), []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWorkspaceFiles() {
+      if (!mentionOpen || !agentId) {
+        if (!cancelled) {
+          setMentionFiles([]);
+          setMentionLoading(false);
+          setMentionError('');
+        }
+        return;
+      }
+
+      setMentionLoading(true);
+      setMentionError('');
+      try {
+        const files = await collectAgentWorkspaceFiles(agentId);
+        if (!cancelled) setMentionFiles(files);
+      } catch (err) {
+        if (!cancelled) {
+          setMentionFiles([]);
+          setMentionError(err.message || 'Unable to search files');
+        }
+      } finally {
+        if (!cancelled) setMentionLoading(false);
+      }
+    }
+
+    loadWorkspaceFiles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mentionOpen, agentId]);
+
+  const filteredMentionFiles = useMemo(() => {
+    const query = mentionQuery.trim().toLowerCase();
+    const selected = new Set(pendingContextFiles.map((file) => file.relativePath));
+    return mentionFiles
+      .filter((file) => !selected.has(file.relativePath))
+      .filter((file) => !query || file.relativePath.toLowerCase().includes(query))
+      .slice(0, 12);
+  }, [mentionFiles, mentionQuery, pendingContextFiles]);
+  const safeMentionActiveIndex = Math.min(mentionActiveIndex, Math.max(filteredMentionFiles.length - 1, 0));
+
   const handleSend = () => {
     const text = input.trim();
-    if ((!text && pendingImages.length === 0) || streaming) return;
-    onSendMessage(text, pendingImages.length > 0 ? pendingImages : undefined);
+    if ((!text && pendingImages.length === 0 && pendingContextFiles.length === 0) || streaming) return;
+    onSendMessage(
+      buildDisplayMessageWithFileRefs(text, pendingContextFiles),
+      pendingImages.length > 0 ? pendingImages : undefined,
+      pendingContextFiles.length > 0 ? pendingContextFiles : undefined
+    );
     setInput('');
     setPendingImages([]);
+    setPendingContextFiles([]);
+    setMentionOpen(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -289,7 +431,65 @@ const MessagePanel = ({
     setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const removeContextFile = (relativePath) => {
+    setPendingContextFiles((prev) => prev.filter((file) => file.relativePath !== relativePath));
+  };
+
+  const closeMentionSelector = () => {
+    setMentionOpen(false);
+    setMentionQuery('');
+    setMentionRange(null);
+    setMentionActiveIndex(0);
+  };
+
+  const selectMentionFile = async (file) => {
+    if (!agentId || !file) return;
+    try {
+      const content = await readAgentWorkspaceFile(agentId, file.relativePath);
+      setPendingContextFiles((prev) => {
+        if (prev.some((item) => item.relativePath === file.relativePath)) return prev;
+        return [...prev, { ...file, content }];
+      });
+      if (mentionRange) {
+        const nextInput = input.slice(0, mentionRange.start) + input.slice(mentionRange.end);
+        setInput(nextInput);
+        requestAnimationFrame(() => {
+          if (!textareaRef.current) return;
+          textareaRef.current.focus({ preventScroll: true });
+          textareaRef.current.selectionStart = textareaRef.current.selectionEnd = mentionRange.start;
+          textareaRef.current.style.height = 'auto';
+          textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + 'px';
+        });
+      }
+      closeMentionSelector();
+    } catch (err) {
+      setMentionError(err.message || `Unable to read ${file.relativePath}`);
+    }
+  };
+
   const handleKeyDown = (e) => {
+    if (mentionOpen) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionActiveIndex((prev) => Math.min(prev + 1, Math.max(filteredMentionFiles.length - 1, 0)));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionActiveIndex((prev) => Math.max(prev - 1, 0));
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeMentionSelector();
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && filteredMentionFiles.length > 0) {
+        e.preventDefault();
+        selectMentionFile(filteredMentionFiles[safeMentionActiveIndex]);
+        return;
+      }
+    }
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       const ta = e.target;
@@ -312,8 +512,18 @@ const MessagePanel = ({
   };
 
   const handleInputChange = (e) => {
-    setInput(e.target.value);
     const ta = e.target;
+    const value = ta.value;
+    const nextMentionRange = getMentionRange(value, ta.selectionStart);
+    setInput(value);
+    if (nextMentionRange) {
+      setMentionOpen(true);
+      setMentionRange(nextMentionRange);
+      setMentionQuery(nextMentionRange.query);
+      setMentionActiveIndex(0);
+    } else if (mentionOpen) {
+      closeMentionSelector();
+    }
     ta.style.height = 'auto';
     ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
   };
@@ -327,8 +537,11 @@ const MessagePanel = ({
             show={showSettings}
             onClose={() => setShowSettings(false)}
             llmConfig={llmConfig}
+            llmProfiles={llmProfiles}
+            activeLlmProfileId={activeLlmProfileId}
             providers={providers}
             onConfigureLLM={onConfigureLLM}
+            onDeleteLLM={onDeleteLLM}
             onFetchModels={onFetchModels}
             theme={theme}
             onThemeChange={onThemeChange}
@@ -338,8 +551,11 @@ const MessagePanel = ({
             onFactoryReset={onFactoryReset}
             nickname={nickname}
             onNicknameChange={onNicknameChange}
+            avatar={avatar}
+            onAvatarChange={onAvatarChange}
             agentList={agentList}
             onAgentListChange={onAgentListChange}
+            onStorageRestored={onStorageRestored}
           />
         </Suspense>
       )}
@@ -347,25 +563,49 @@ const MessagePanel = ({
 
       {/* Header bar with settings and file manager */}
       <div className="message-panel-header">
-        <span className="model-badge">
-          {llmConfig?.configured
-            ? `${llmConfig.provider} / ${llmConfig.model}`
-            : t('message.noProviderConfigured')}
-        </span>
+        
         {agentList.length > 0 && (
           <div className="agent-selector">
             <User width={14} height={14} />
-            <select
-              value={agentId || ''}
-              onChange={(e) => onAgentChange?.(activeChatId, e.target.value || null)}
-              title="Select agent"
-            >
-              {agentList.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
+            <div className="agent-selector-control">
+              <div className="agent-selector-label" aria-hidden="true">
+                <span className="agent-selector-name">{selectedAgent?.name}</span>
+                <span className="agent-selector-id">{selectedAgent?.id}</span>
+              </div>
+              <select
+                value={agentId || ''}
+                onChange={(e) => onAgentChange?.(activeChatId, e.target.value || null)}
+                title="Select agent"
+                aria-label="Select agent"
+              >
+                {agentList.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
+
+        <div className="llm-selector-group">
+          <div className="llm-selector">
+            <Cloud width={14} height={14} />
+            <select
+              value={activeLlmProfileId || ''}
+              onChange={(e) => onSelectLLM?.(e.target.value || null)}
+              title={t('llmSettings.profile')}
+            >
+              {llmProfiles?.length ? (
+                llmProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name || `${profile.provider} / ${profile.model}`}
+                  </option>
+                ))
+              ) : (
+                <option value="">{t('message.noProviderConfigured')}</option>
+              )}
+            </select>
+          </div>
+        </div>
 
         <div className="header-buttons">
           <button className="settings-btn" onClick={() => setShowSettings(true)} title={t('settings.title')}>
@@ -391,11 +631,15 @@ const MessagePanel = ({
           messages.map((msg) => (
             <div key={msg.id} className={`message ${msg.role}`}>
               <div className="message-avatar">
-                {msg.role === 'user' ? 'U' : 'V'}
+                {msg.role === 'assistant' && avatar ? (
+                  <img src={avatar} alt="" />
+                ) : (
+                  msg.role === 'user' ? 'U' : assistantInitial
+                )}
               </div>
               <div className="message-content">
                 <div className="message-role">
-                  {msg.role === 'user' ? t('message.you') : t('message.assistant')}
+                  {msg.role === 'user' ? t('message.you') : assistantName}
                 </div>
                 {msg.role === 'assistant' && (msg.thinking || (streaming && msg.content === '')) && (
                   <ThinkingBlock thinking={msg.thinking} isThinking={streaming && msg === messages[messages.length - 1]} />
@@ -436,7 +680,58 @@ const MessagePanel = ({
             ))}
           </div>
         )}
+        {pendingContextFiles.length > 0 && (
+          <div className="file-context-strip">
+            {pendingContextFiles.map((file) => (
+              <div key={file.relativePath} className="file-context-chip" title={file.displayPath}>
+                <File width={14} height={14} />
+                <span>{file.relativePath}</span>
+                <button
+                  type="button"
+                  className="file-context-remove"
+                  onClick={() => removeContextFile(file.relativePath)}
+                  title="Remove file context"
+                >
+                  <X width={12} height={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="message-input-wrapper">
+          {mentionOpen && (
+            <div className="file-mention-popover">
+              <div className="file-mention-header">
+                <span>@ files</span>
+                <span>/workspace/{agentId || 'agent'}</span>
+              </div>
+              <div className="file-mention-list">
+                {mentionLoading ? (
+                  <div className="file-mention-empty">Searching files...</div>
+                ) : mentionError ? (
+                  <div className="file-mention-empty">{mentionError}</div>
+                ) : filteredMentionFiles.length === 0 ? (
+                  <div className="file-mention-empty">{agentId ? 'No matching files' : 'Select an agent first'}</div>
+                ) : (
+                  filteredMentionFiles.map((file, index) => (
+                    <button
+                      key={file.relativePath}
+                      type="button"
+                      className={`file-mention-item${index === safeMentionActiveIndex ? ' active' : ''}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        selectMentionFile(file);
+                      }}
+                    >
+                      <File width={15} height={15} />
+                      <span className="file-mention-path">{file.relativePath}</span>
+                      <span className="file-mention-size">{formatBytes(file.size)}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -465,7 +760,7 @@ const MessagePanel = ({
           <button
             className="send-btn"
             onClick={streaming ? onStopStreaming : handleSend}
-            disabled={!streaming && !input.trim() && pendingImages.length === 0}
+            disabled={!streaming && !input.trim() && pendingImages.length === 0 && pendingContextFiles.length === 0}
             title={streaming ? t('message.stop') : t('message.send')}
           >
             {streaming ? (
@@ -494,19 +789,16 @@ const MessagePanel = ({
                   ) : (
                     <Plug width={14} height={14} />
                   )}
-                  {connectedAgents.length === 1 ? (
-                    isE2b ? <span>E2B</span> : <span>{t('message.sandbox')}</span>
-                  ) : (
-                    <select
-                      className="sandbox-select-inline"
-                      value={selectedAgentUrl || ''}
-                      onChange={(e) => onSelectAgent(e.target.value || null)}
-                    >
-                      {connectedAgents.map((a) => (
-                        <option key={a.url} value={a.url}>{a.name}</option>
-                      ))}
-                    </select>
-                  )}
+                  <select
+                    className="sandbox-select-inline"
+                    value={selectedAgentUrl || ''}
+                    onChange={(e) => onSelectAgent(e.target.value || null)}
+                  >
+                    <option value="">{t('message.noSandboxSelected')}</option>
+                    {connectedAgents.map((a) => (
+                      <option key={a.url} value={a.url}>{a.name}</option>
+                    ))}
+                  </select>
                 </span>
               );
             })()}
@@ -516,6 +808,8 @@ const MessagePanel = ({
       </div>
     </div>
   );
-};
+});
+
+MessagePanel.displayName = 'MessagePanel';
 
 export default MessagePanel;

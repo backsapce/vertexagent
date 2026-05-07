@@ -36,6 +36,13 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, 
     }
   }, [onSelectChat, isMobile]);
 
+  const handleNewChat = useCallback(() => {
+    if (isMobile) {
+      setMobileOpen(false);
+    }
+    onNewChat();
+  }, [isMobile, onNewChat]);
+
   const handleMouseDown = useCallback((e) => {
     e.preventDefault();
     setIsResizing(true);
@@ -114,7 +121,7 @@ const ChatList = ({ chats, activeChatId, onSelectChat, onNewChat, onDeleteChat, 
         <div className="chat-list-inner">
           <div className="chat-list-header">
             <h2>{t('app.name')}</h2>
-            <button className="new-chat-btn" onClick={onNewChat} title={t('chat.newChat')}>
+            <button className="new-chat-btn" onClick={handleNewChat} title={t('chat.newChat')}>
               <Plus width={20} height={20} />
             </button>
           </div>

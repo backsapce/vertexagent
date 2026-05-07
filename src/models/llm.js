@@ -21,6 +21,7 @@ import anthropic from './providers/anthropic.js';
 import gemini from './providers/gemini.js';
 import openrouter from './providers/openrouter.js';
 import qwen from './providers/qwen.js';
+import deepseek from './providers/deepseek.js';
 import customOpenai from './providers/custom-openai.js';
 import { loadSettings, saveSettings } from './settings.js';
 
@@ -32,17 +33,78 @@ const providers = {
   gemini,
   openrouter,
   qwen,
+  deepseek,
   'custom-openai': customOpenai,
 };
 
 // ─── Active config (in-memory) ──────────────────────────────────────────────
 
-let activeConfig = {
-  provider: null,   // provider id string
-  apiKey: null,
-  baseUrl: null,    // optional override
-  model: null,      // model id or null for default
-};
+let activeProfileId = null;
+let profiles = {};
+
+function generateProfileId() {
+  return `llm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function defaultProfileName(cfg) {
+  const providerName = providers[cfg.provider]?.name || cfg.provider || 'LLM';
+  return cfg.model ? `${providerName} / ${cfg.model}` : providerName;
+}
+
+function normalizeProfile(id, cfg = {}) {
+  return {
+    id,
+    name: cfg.name || defaultProfileName(cfg),
+    provider: cfg.provider || null,
+    apiKey: cfg.apiKey || null,
+    baseUrl: cfg.baseUrl || null,
+    model: cfg.model || null,
+  };
+}
+
+function normalizeSettings(saved) {
+  if (!saved) {
+    return { activeProfileId: null, profiles: {} };
+  }
+
+  if (saved.profiles && typeof saved.profiles === 'object') {
+    const normalized = {};
+    for (const [id, profile] of Object.entries(saved.profiles)) {
+      normalized[id] = normalizeProfile(id, profile);
+    }
+    const firstId = Object.keys(normalized)[0] || null;
+    return {
+      activeProfileId: saved.activeProfileId && normalized[saved.activeProfileId]
+        ? saved.activeProfileId
+        : firstId,
+      profiles: normalized,
+    };
+  }
+
+  // Legacy single-LLM config migration.
+  if (saved.provider || saved.apiKey || saved.model || saved.baseUrl) {
+    const id = saved.id || 'default';
+    return {
+      activeProfileId: id,
+      profiles: {
+        [id]: normalizeProfile(id, saved),
+      },
+    };
+  }
+
+  return { activeProfileId: null, profiles: {} };
+}
+
+function getProfile(profileId = activeProfileId) {
+  return profileId ? profiles[profileId] : null;
+}
+
+async function persistSettings() {
+  await saveSettings({
+    activeProfileId,
+    profiles,
+  });
+}
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -66,15 +128,26 @@ const llm = {
    * Get the currently active provider and model info.
    * @returns {{ provider, model, configured }}
    */
-  getActiveConfig() {
-    const p = providers[activeConfig.provider];
+  getActiveConfig(profileId = activeProfileId) {
+    const profile = getProfile(profileId);
+    const p = providers[profile?.provider];
     return {
-      provider: activeConfig.provider,
-      model: activeConfig.model || p?.defaultModel || null,
-      baseUrl: activeConfig.baseUrl,
-      configured: !!(activeConfig.provider && activeConfig.apiKey),
-      hasApiKey: !!activeConfig.apiKey,
+      id: profile?.id || null,
+      name: profile?.name || null,
+      provider: profile?.provider || null,
+      model: profile?.model || p?.defaultModel || null,
+      baseUrl: profile?.baseUrl || null,
+      configured: !!(profile?.provider && profile?.apiKey),
+      hasApiKey: !!profile?.apiKey,
     };
+  },
+
+  getProfiles() {
+    return Object.values(profiles).map((profile) => llm.getActiveConfig(profile.id));
+  },
+
+  getActiveProfileId() {
+    return activeProfileId;
   },
 
   /**
@@ -84,11 +157,12 @@ const llm = {
    * @param {Object} config - { apiKey, baseUrl? }
    * @returns {Promise<Array<{ id, name }>>}
    */
-  async fetchModels(providerId, config) {
+  async fetchModels(providerId, config = {}, profileId = activeProfileId) {
     const provider = providers[providerId];
     if (!provider) throw new Error(`Unknown provider: ${providerId}`);
     // Use saved API key as fallback when none is explicitly provided
-    const apiKey = config.apiKey || activeConfig.apiKey;
+    const profile = getProfile(profileId);
+    const apiKey = config.apiKey || profile?.apiKey;
     if (!apiKey) return provider.fallbackModels;
     try {
       const models = await provider.listModels({ ...config, apiKey });
@@ -108,15 +182,36 @@ const llm = {
       throw new Error(`Unknown provider: ${cfg.provider}`);
     }
 
-    activeConfig = { ...activeConfig, ...cfg };
+    const id = Object.prototype.hasOwnProperty.call(cfg, 'id')
+      ? (cfg.id || generateProfileId())
+      : (activeProfileId || generateProfileId());
+    const previous = profiles[id] || { id };
+    const next = normalizeProfile(id, { ...previous, ...cfg, apiKey: cfg.apiKey || previous.apiKey });
+    profiles = { ...profiles, [id]: next };
+    activeProfileId = id;
+    await persistSettings();
+    return llm.getActiveConfig(id);
+  },
 
-    // Persist to OPFS
-    await saveSettings({
-      provider: activeConfig.provider,
-      apiKey: activeConfig.apiKey,
-      baseUrl: activeConfig.baseUrl,
-      model: activeConfig.model,
-    });
+  async selectProfile(profileId) {
+    if (profileId && !profiles[profileId]) {
+      throw new Error(`Unknown LLM profile: ${profileId}`);
+    }
+    activeProfileId = profileId || null;
+    await persistSettings();
+    return llm.getActiveConfig();
+  },
+
+  async deleteProfile(profileId) {
+    if (!profiles[profileId]) return llm.getActiveConfig();
+    const nextProfiles = { ...profiles };
+    delete nextProfiles[profileId];
+    profiles = nextProfiles;
+    if (activeProfileId === profileId) {
+      activeProfileId = Object.keys(profiles)[0] || null;
+    }
+    await persistSettings();
+    return llm.getActiveConfig();
   },
 
   /**
@@ -124,8 +219,11 @@ const llm = {
    */
   async init() {
     const saved = await loadSettings();
-    if (saved) {
-      activeConfig = { ...activeConfig, ...saved };
+    const normalized = normalizeSettings(saved);
+    activeProfileId = normalized.activeProfileId;
+    profiles = normalized.profiles;
+    if (saved && !saved.profiles && activeProfileId) {
+      await persistSettings();
     }
     return llm.getActiveConfig();
   },
@@ -138,13 +236,14 @@ const llm = {
    * @returns {AsyncGenerator<{ content?: string, reasoning?: string, toolCalls?: Array, usage?: Object }>}
    */
   async *chat(messages, opts = {}) {
-    const provider = providers[activeConfig.provider];
+    const profile = getProfile(opts.llmProfileId);
+    const provider = providers[profile?.provider];
     if (!provider) {
       throw new Error(
         'No LLM provider configured. Please set up a provider in Settings.'
       );
     }
-    if (!activeConfig.apiKey) {
+    if (!profile.apiKey) {
       throw new Error(
         `API key not set for ${provider.name}. Please add your key in Settings.`
       );
@@ -156,9 +255,9 @@ const llm = {
       : messages;
 
     const config = {
-      apiKey: activeConfig.apiKey,
-      baseUrl: activeConfig.baseUrl,
-      model: activeConfig.model || provider.defaultModel,
+      apiKey: profile.apiKey,
+      baseUrl: profile.baseUrl,
+      model: profile.model || provider.defaultModel,
     };
 
     yield* provider.stream(config, fullMessages, {
@@ -192,7 +291,13 @@ const llm = {
    * @returns {boolean}
    */
   isConfigured() {
-    return !!(activeConfig.provider && activeConfig.apiKey);
+    const profile = getProfile();
+    return !!(profile?.provider && profile?.apiKey);
+  },
+
+  isProfileConfigured(profileId = activeProfileId) {
+    const profile = getProfile(profileId);
+    return !!(profile?.provider && profile?.apiKey);
   },
 };
 

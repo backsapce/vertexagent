@@ -20,5 +20,5 @@ export async function loadSettings() {
  * @param {Object} settings - { provider, apiKey, baseUrl?, model? }
  */
 export async function saveSettings(settings) {
-  await config.merge('llm', settings);
+  await config.set('llm', settings);
 }

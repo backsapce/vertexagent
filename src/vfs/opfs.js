@@ -4,6 +4,7 @@
  */
 
 import JSZip from 'jszip';
+import yaml from 'js-yaml';
 import { getWorkspaceDirName } from '../agents/agents.js';
 import { notifySync } from '../sync/opfsBridge.js';
 
@@ -92,6 +93,134 @@ export async function writeText(dirHandle, filename, content) {
   const writable = await fileHandle.createWritable();
   await writable.write(content);
   await writable.close();
+}
+
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function isPlainObject(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeByIdentity(localItems, incomingItems) {
+  const merged = [...localItems];
+  const indexByKey = new Map();
+
+  merged.forEach((item, index) => {
+    if (!isPlainObject(item)) return;
+    const key = item.id ?? item.name ?? item.url;
+    if (key != null) indexByKey.set(String(key), index);
+  });
+
+  for (const incomingItem of incomingItems) {
+    if (isPlainObject(incomingItem)) {
+      const key = incomingItem.id ?? incomingItem.name ?? incomingItem.url;
+      const existingIndex = key != null ? indexByKey.get(String(key)) : undefined;
+      if (existingIndex != null) {
+        merged[existingIndex] = mergeData(merged[existingIndex], incomingItem);
+        continue;
+      }
+    }
+
+    const exists = merged.some((item) => JSON.stringify(item) === JSON.stringify(incomingItem));
+    if (!exists) merged.push(incomingItem);
+  }
+
+  return merged;
+}
+
+function mergeData(localValue, incomingValue) {
+  if (localValue == null) return incomingValue;
+  if (incomingValue == null) return localValue;
+
+  if (Array.isArray(localValue) && Array.isArray(incomingValue)) {
+    return mergeByIdentity(localValue, incomingValue);
+  }
+
+  if (isPlainObject(localValue) && isPlainObject(incomingValue)) {
+    const merged = { ...localValue };
+    for (const [key, incomingChild] of Object.entries(incomingValue)) {
+      merged[key] = mergeData(localValue[key], incomingChild);
+    }
+    return merged;
+  }
+
+  return localValue;
+}
+
+function shouldMergeIncomingFile(path) {
+  return [
+    'config.yaml',
+    'config.yml',
+    'config.json',
+    'chat.json',
+    'chats.json',
+  ].includes(path) || /^messages\/[^/]+\.json$/.test(path);
+}
+
+function formatMergedFile(path, data) {
+  if (path === 'config.yaml' || path === 'config.yml') {
+    return yaml.dump(data, { lineWidth: 120, noRefs: true });
+  }
+  return JSON.stringify(data, null, 2);
+}
+
+function parseMergeableFile(path, text) {
+  if (path === 'config.yaml' || path === 'config.yml') {
+    try {
+      return yaml.load(text) || {};
+    } catch {
+      return null;
+    }
+  }
+  return parseJson(text);
+}
+
+/**
+ * Merge incoming backup/sync content into existing content. The existing side
+ * wins scalar conflicts; the incoming side contributes missing keys/items.
+ */
+export function mergeIncomingTextContent(existingText, incomingText, localPath) {
+  const normalizedPath = (localPath || '').replace(/^\/+|\/+$/g, '');
+
+  if (!shouldMergeIncomingFile(normalizedPath)) {
+    return { content: incomingText, merged: false };
+  }
+
+  const incomingData = parseMergeableFile(normalizedPath, incomingText);
+  if (incomingData == null) {
+    return { content: incomingText, merged: false };
+  }
+
+  if (!existingText) {
+    return { content: formatMergedFile(normalizedPath, incomingData), merged: false };
+  }
+
+  const localData = parseMergeableFile(normalizedPath, existingText);
+  if (localData == null) {
+    return { content: incomingText, merged: false };
+  }
+
+  return {
+    content: formatMergedFile(normalizedPath, mergeData(localData, incomingData)),
+    merged: true,
+  };
+}
+
+/**
+ * Write incoming backup/sync content. Known structured data files are merged
+ * instead of overwritten so local config, chats, and messages are preserved.
+ */
+export async function writeIncomingText(dirHandle, filename, content, localPath) {
+  const existingText = await readText(dirHandle, filename);
+  const result = mergeIncomingTextContent(existingText, content, localPath || filename);
+  await writeText(dirHandle, filename, result.content);
+  return { merged: result.merged };
 }
 
 /**
@@ -233,7 +362,7 @@ export async function importFromZip(blob) {
     const parts = path.split('/');
     const fileName = parts.pop();
     const dir = await getDirectory(...parts);
-    await writeText(dir, fileName, await file.async('string'));
+    await writeIncomingText(dir, fileName, await file.async('string'), path);
   }
 }
 

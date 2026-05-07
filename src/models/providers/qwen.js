@@ -1,4 +1,4 @@
-import { formatMultimodal, readSSE } from './shared.js';
+import { formatMultimodal, formatOpenAITools, readSSE } from './shared.js';
 
 /**
  * Qwen / Aliyun DashScope provider.
@@ -48,14 +48,7 @@ export default {
 
     // Tool calling support — Qwen DashScope uses OpenAI-style tool format
     if (opts.tools?.length) {
-      body.tools = opts.tools.map((t) => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      }));
+      body.tools = formatOpenAITools(opts.tools);
     }
 
     const res = await fetch(`${baseUrl}/chat/completions`, {

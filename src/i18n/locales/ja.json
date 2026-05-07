@@ -46,6 +46,7 @@
         "language": "言語",
         "agents": "エージェント",
         "skills": "スキル",
+        "tools": "ツール",
         "sync": "同期",
         "cancel": "キャンセル",
         "save": "保存"
@@ -55,11 +56,22 @@
         "desc": "一般アプリケーション設定を設定します。",
         "nickname": "アシスタントのニックネーム",
         "nicknamePlaceholder": "アシスタントのニックネームを入力...",
-        "nicknameHint": "この名前は会話でアシスタントの名前として表示されます。"
+        "nicknameHint": "この名前は会話でアシスタントの名前として表示されます。",
+        "avatar": "ヘルパーアバター",
+        "avatarUpload": "アップロード",
+        "avatarRemove": "削除",
+        "avatarHint": "会話で使うアシスタントのアバター画像をアップロードします。",
+        "avatarLoadFailed": "アバター画像を読み込めませんでした。",
+        "avatarUploadFailed": "この画像を使用できません。"
     },
     "llmSettings": {
         "title": "LLM 設定",
-        "desc": "LLM プロバイダー、API キー、モデルを設定します。",
+        "desc": "複数の LLM プロファイルを設定し、チャットごとに選択できます。",
+        "profile": "LLM プロファイル",
+        "profileName": "プロファイル名",
+        "profileNamePlaceholder": "Work GPT-4.1、Local Qwen...",
+        "addProfile": "プロファイルを追加",
+        "deleteProfile": "プロファイルを削除",
         "provider": "プロバイダー",
         "selectProvider": "プロバイダーを選択...",
         "apiKey": "API キー",
@@ -156,6 +168,15 @@
         "enableAll": "すべて有効化",
         "disableAll": "すべて無効化"
     },
+    "toolSettings": {
+        "title": "ツール",
+        "desc": "エージェントツールを有効または無効にします。無効にしたツールはモデルに送信されず、実行もできません。",
+        "empty": "利用可能なツールがありません。",
+        "enabled": "有効",
+        "disabled": "無効",
+        "enableAll": "すべて有効化",
+        "disableAll": "すべて無効化"
+    },
     "agentSettings": {
         "title": "エージェント",
         "desc": "エージェントを管理します。各エージェントはメモリとファイルが分離された独立したワークスペースを持ちます。グローバルスキルはすべてのエージェントで共有されます。",
@@ -163,7 +184,11 @@
         "addAgent": "エージェントを追加",
         "removeAgent": "エージェントを削除",
         "created": "作成日",
-        "rename": "名前をクリックしてリネーム"
+        "rename": "名前をクリックしてリネーム",
+        "defaultLlm": "デフォルト LLM",
+        "firstConfiguredLlm": "最初に設定した LLM",
+        "sandbox": "サンドボックス",
+        "noSandbox": "サンドボックスを使用しない"
     },
     "errors": {
         "noLLMConfigured": "設定で LLM プロバイダーを設定してください。",
@@ -283,6 +308,7 @@
         "uploadSuccess": "アップロードが完了しました。",
         "uploadFailed": "アップロードに失敗しました：{error}",
         "downloadSuccess": "ダウンロードが完了しました。",
+        "downloadSuccessWithCount": "ダウンロードが完了しました。{count} 件のファイルをローカルに同期しました。",
         "downloadFailed": "ダウンロードに失敗しました：{error}",
         "enableAutoSync": "自動同期を有効化",
         "autoSyncHint": "最初に完全同期を実行し、その後は各ローカル編集時に自動的に変更をプッシュします。",

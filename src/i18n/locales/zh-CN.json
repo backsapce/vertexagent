@@ -46,6 +46,7 @@
         "language": "语言",
         "agents": "代理",
         "skills": "技能",
+        "tools": "工具",
         "sync": "同步",
         "cancel": "取消",
         "save": "保存"
@@ -55,11 +56,22 @@
         "desc": "配置通用应用程序设置。",
         "nickname": "助手昵称",
         "nicknamePlaceholder": "输入助手的昵称...",
-        "nicknameHint": "此名称将在对话中显示为助手的名称。"
+        "nicknameHint": "此名称将在对话中显示为助手的名称。",
+        "avatar": "助手头像",
+        "avatarUpload": "上传",
+        "avatarRemove": "移除",
+        "avatarHint": "上传图片，将其作为对话中的助手头像。",
+        "avatarLoadFailed": "头像图片加载失败。",
+        "avatarUploadFailed": "无法使用该图片。"
     },
     "llmSettings": {
         "title": "LLM 配置",
-        "desc": "配置你的 LLM 服务商、API 密钥和模型。",
+        "desc": "配置多个 LLM 配置，并为每个对话选择使用哪一个。",
+        "profile": "LLM 配置",
+        "profileName": "配置名称",
+        "profileNamePlaceholder": "工作 GPT-4.1、本地 Qwen...",
+        "addProfile": "添加配置",
+        "deleteProfile": "删除配置",
         "provider": "服务商",
         "selectProvider": "选择服务商...",
         "apiKey": "API 密钥",
@@ -156,6 +168,15 @@
         "enableAll": "全部启用",
         "disableAll": "全部禁用"
     },
+    "toolSettings": {
+        "title": "工具",
+        "desc": "启用或禁用代理工具。禁用的工具不会发送给模型，也无法执行。",
+        "empty": "没有可用的工具。",
+        "enabled": "已启用",
+        "disabled": "已禁用",
+        "enableAll": "全部启用",
+        "disableAll": "全部禁用"
+    },
     "agentSettings": {
         "title": "代理",
         "desc": "管理代理。每个代理拥有独立的工作区，包括隔离的记忆和文件。全局技能在所有代理间共享。",
@@ -163,7 +184,11 @@
         "addAgent": "添加代理",
         "removeAgent": "移除代理",
         "created": "创建于",
-        "rename": "点击名称重命名"
+        "rename": "点击名称重命名",
+        "defaultLlm": "默认 LLM",
+        "firstConfiguredLlm": "第一个已配置的 LLM",
+        "sandbox": "沙箱",
+        "noSandbox": "不使用沙箱"
     },
     "errors": {
         "noLLMConfigured": "请在设置中配置 LLM 服务商。",
@@ -283,6 +308,7 @@
         "uploadSuccess": "上传成功。",
         "uploadFailed": "上传失败：{error}",
         "downloadSuccess": "下载成功。",
+        "downloadSuccessWithCount": "下载成功。已同步 {count} 个文件到本地。",
         "downloadFailed": "下载失败：{error}",
         "enableAutoSync": "启用自动同步",
         "autoSyncHint": "首先执行完整同步，之后每次本地编辑都会自动推送更改。",

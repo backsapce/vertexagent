@@ -426,12 +426,12 @@ export async function initAgents() {
     await config.set('agents', allAgents.filter((a) => !a.isE2b).map(({ url, name }) => ({ url, name })));
   }
 
-  // Auto-select first connected agent
+  // Restore a saved selection for remote file operations. Chats opt in per agent.
   const savedSelected = config.get('selectedAgent');
   const connected = allAgents.filter((a) => a.status === 'connected');
   const selectedUrl = (savedSelected && connected.some((a) => a.url === savedSelected))
     ? savedSelected
-    : (connected.length > 0 ? connected[0].url : null);
+    : null;
 
   return { agents: allAgents, selectedUrl };
 }

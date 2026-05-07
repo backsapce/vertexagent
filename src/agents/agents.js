@@ -22,6 +22,16 @@ import { writeAgentAgentsFile, readAgentAgentsFile } from '../vfs/opfs.js';
 const ROOT_DIR = 'vertex-agent';
 const WORKSPACE_DIR = 'workspace';
 
+function normalizeAgent(agent) {
+  return {
+    id: agent.id,
+    name: agent.name || agent.id,
+    createdAt: agent.createdAt || new Date().toISOString(),
+    llmProfileId: agent.llmProfileId || null,
+    sandboxUrl: agent.sandboxUrl || null,
+  };
+}
+
 // ─── OPFS helpers ─────────────────────────────────────────────────────────────
 
 async function getRootDir() {
@@ -85,15 +95,16 @@ export function generateAgentId() {
 export async function ensureDefaultAgent() {
   while (!config.initialized) await new Promise((r) => setTimeout(r, 50));
 
-  const agents = config.get('agentsList') || [];
+  const agents = (config.get('agentsList') || []).map(normalizeAgent);
   if (agents.length > 0) {
     // Agent already exists — ensure its workspace and AGENTS.md exist too (for upgrades)
     await ensureAgentWorkspace(agents[0].id, agents[0].name);
+    await config.set('agentsList', agents);
     return agents[0].id;
   }
 
   const id = generateAgentId();
-  const agent = { id, name: id, createdAt: new Date().toISOString() };
+  const agent = normalizeAgent({ id, name: id, createdAt: new Date().toISOString() });
   await config.set('agentsList', [agent]);
 
   await ensureAgentWorkspace(id, id);
@@ -109,7 +120,7 @@ export async function ensureDefaultAgent() {
  */
 export async function listAgents() {
   while (!config.initialized) await new Promise((r) => setTimeout(r, 50));
-  return config.get('agentsList') || [];
+  return (config.get('agentsList') || []).map(normalizeAgent);
 }
 
 /**
@@ -130,7 +141,7 @@ export async function getAgent(id) {
 export async function createAgent(name) {
   const id = generateAgentId();
   const agentName = name || id;
-  const agent = { id, name: agentName, createdAt: new Date().toISOString() };
+  const agent = normalizeAgent({ id, name: agentName, createdAt: new Date().toISOString() });
 
   const agents = await listAgents();
   agents.push(agent);
@@ -196,6 +207,40 @@ export async function updateAgentName(id, name) {
     }
   } catch {
     // AGENTS.md may not exist yet
+  }
+}
+
+/**
+ * Update an agent's runtime defaults.
+ * @param {string} id
+ * @param {{ llmProfileId?: string|null, sandboxUrl?: string|null }} patch
+ */
+export async function updateAgentConfig(id, patch) {
+  const agents = await listAgents();
+  const updated = agents.map((a) => (
+    a.id === id
+      ? normalizeAgent({
+          ...a,
+          ...patch,
+          llmProfileId: Object.prototype.hasOwnProperty.call(patch, 'llmProfileId')
+            ? (patch.llmProfileId || null)
+            : a.llmProfileId,
+          sandboxUrl: Object.prototype.hasOwnProperty.call(patch, 'sandboxUrl')
+            ? (patch.sandboxUrl || null)
+            : a.sandboxUrl,
+        })
+      : a
+  ));
+  await config.set('agentsList', updated);
+
+  try {
+    const wsDir = await getWorkspaceDir(id);
+    const existing = await readJSON(wsDir, 'meta.json');
+    if (existing) {
+      await writeJSON(wsDir, 'meta.json', normalizeAgent({ ...existing, ...patch }));
+    }
+  } catch {
+    // workspace may not exist yet
   }
 }
 

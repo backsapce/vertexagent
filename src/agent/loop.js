@@ -26,7 +26,7 @@
 
 import { getContext } from 'tokenlens';
 import llm from '../models/llm';
-import { registry } from './tools.js';
+import { getEnabledToolSchemas, registry } from './tools.js';
 import { assembleApiMessages } from './context.js';
 import { loadMemory } from './memory.js';
 import { buildSkillsSection } from './skills.js';
@@ -48,6 +48,7 @@ const DEFAULT_MAX_ROUNDS = 10;
  * @param {number} [opts.maxRounds] - Max tool execution rounds (default 10)
  * @param {string} [opts.provider] - Provider id for context window estimation
  * @param {string} [opts.model] - Model id for accurate context window lookup
+ * @param {string} [opts.llmProfileId] - LLM profile id to use for this run
  * @returns {Promise<{ content: string, thinking: string, toolCalls: Array }>}
  */
 export async function runAgentLoop(opts) {
@@ -103,7 +104,7 @@ export async function runAgentLoop(opts) {
       apiMessages,
       finalSystemPrompt,
       toolSchemas,
-      { signal, onUpdate }
+      { signal, onUpdate, llmProfileId: opts.llmProfileId }
     );
 
     finalContent = content;
@@ -168,7 +169,15 @@ export async function runAgentLoop(opts) {
     // Append assistant message and tool results to apiMessages
     apiMessages = [
       ...apiMessages,
-      { role: 'assistant', content },
+      {
+        role: 'assistant',
+        content,
+        tool_calls: toolCalls.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.rawArgs || '{}',
+        })),
+      },
       ...toolResults,
     ];
 
@@ -213,6 +222,7 @@ async function streamAndCollect(apiMessages, systemPrompt, toolSchemas, opts) {
   try {
     const chatOpts = {
       signal: opts.signal,
+      llmProfileId: opts.llmProfileId,
     };
 
     // Add tool schemas if available
@@ -318,15 +328,7 @@ function finalizeToolCalls(fragments) {
  * Get available tool schemas filtered by availability.
  */
 function getAvailableToolSchemas(agentUrl, agentId) {
-  const context = { agentUrl, agentId };
-  return registry
-    .getAll()
-    .filter((t) => !t.checkAvailable || t.checkAvailable(context))
-    .map((t) => ({
-      name: t.name,
-      description: t.schema.description,
-      parameters: t.schema.parameters,
-    }));
+  return getEnabledToolSchemas({ agentUrl, agentId });
 }
 
 // Map app provider IDs to tokenlens provider prefixes
@@ -336,6 +338,7 @@ const TOKENLENS_PROVIDER = {
   gemini: 'google',
   qwen: 'alibaba',
   openrouter: 'openrouter',
+  deepseek: 'deepseek',
 };
 
 // Fallback context windows when tokenlens doesn't have the model
@@ -345,6 +348,7 @@ const FALLBACK_WINDOWS = {
   gemini: 1_000_000,
   openrouter: 128_000,
   qwen: 1_000_000,
+  deepseek: 128_000,
   'custom-openai': 128_000,
 };
 
@@ -355,6 +359,8 @@ function modelFallbackWindow(model) {
   if (m.startsWith('qwen3.6') || m.startsWith('qwen3-6')) return 1_000_000;
   if (m.startsWith('qwen3-') || m.startsWith('qwen-m') || m.startsWith('qwen-p')) return 262_144;
   if (m === 'qwen-turbo') return 262_144;
+  if (m.startsWith('deepseek-v4-')) return 1_000_000;
+  if (m.startsWith('deepseek-')) return 128_000;
   return null;
 }
 

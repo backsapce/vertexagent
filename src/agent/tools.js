@@ -14,6 +14,7 @@ import { clearMemory, loadMemory, MEMORY_MAX, saveMemory, saveUser, USER_MAX } f
 import { createSkill, deleteSkill, getSkill, listSkills, updateSkill } from './skills.js';
 import { executeCommand, listFiles, readFileText, writeFile } from '../models/agent';
 import { listAgentFiles, loadFiles, readAgentFile, readFileContent, writeAgentFile } from '../vfs/opfs';
+import config from '../config/config';
 
 // ─── Registry singleton ─────────────────────────────────────────────────────
 
@@ -50,6 +51,9 @@ export const registry = {
     if (!tool) {
       throw new Error(`Unknown tool: ${name}`);
     }
+    if (!isToolEnabled(name)) {
+      throw new Error(`Tool disabled: ${name}`);
+    }
     if (tool.checkAvailable && !tool.checkAvailable(context)) {
       throw new Error(`Tool not available: ${name}`);
     }
@@ -61,6 +65,49 @@ export const registry = {
     return _tools.size > 0;
   },
 };
+
+// ─── Tool enablement ───────────────────────────────────────────────────────
+
+export function getDisabledTools() {
+  const disabled = config.get('tools.disabled') || [];
+  return new Set(disabled);
+}
+
+export async function setToolEnabled(name, enabled) {
+  const disabledSet = getDisabledTools();
+  if (enabled) {
+    disabledSet.delete(name);
+  } else {
+    disabledSet.add(name);
+  }
+  await config.set('tools.disabled', Array.from(disabledSet));
+}
+
+export function isToolEnabled(name) {
+  return !getDisabledTools().has(name);
+}
+
+export function listAllTools() {
+  const disabledSet = getDisabledTools();
+  return registry.getAll().map((tool) => ({
+    name: tool.name,
+    description: tool.schema.description,
+    enabled: !disabledSet.has(tool.name),
+  }));
+}
+
+export function getEnabledToolSchemas(context = {}) {
+  const disabledSet = getDisabledTools();
+  return registry
+    .getAll()
+    .filter((tool) => !disabledSet.has(tool.name))
+    .filter((tool) => !tool.checkAvailable || tool.checkAvailable(context))
+    .map((tool) => ({
+      name: tool.name,
+      description: tool.schema.description,
+      parameters: tool.schema.parameters,
+    }));
+}
 
 // ─── Built-in tools ─────────────────────────────────────────────────────────
 

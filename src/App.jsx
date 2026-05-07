@@ -7,7 +7,7 @@ import llm from './models/llm';
 import { executeCommand, initAgents, cleanupE2b, enableE2b, E2B_AGENT_ID, getSandboxStatus } from './models/agent';
 import { runAgentLoop } from './agent/loop';
 import { ensureDefaultSkills } from './agent/skills';
-import { ensureDefaultAgent, listAgents } from './agents/agents';
+import { ensureDefaultAgent, listAgents, updateAgentConfig } from './agents/agents';
 import { I18nProvider } from './i18n/index';
 import { useI18n } from './i18n/context';
 import { WifiOff, ChevronRight } from './components/Icons/Icons';
@@ -30,6 +30,24 @@ Rules:
 - Always explain what you're doing before and after using tools.
 - Be careful with destructive operations — confirm with the user first.
 - If a tool fails, explain the error and suggest alternatives.`;
+
+const FILE_CONTEXT_MARKER = 'Selected local files from the active agent workspace:';
+
+function expandMessagesForLlm(messages) {
+  return messages.map((message) => {
+    const { contextFiles, ...rest } = message;
+    if (!contextFiles?.length) return rest;
+
+    const fileBlocks = contextFiles
+      .map((file) => `<file path="${file.displayPath}">\n${file.content}\n</file>`)
+      .join('\n\n');
+
+    return {
+      ...rest,
+      content: `${message.content || ''}\n\n${FILE_CONTEXT_MARKER}\n${fileBlocks}`.trim(),
+    };
+  });
+}
 
 function OfflineBanner() {
   const { t } = useI18n();
@@ -57,18 +75,70 @@ function App() {
   const [fileManageWidth, setFileManageWidth] = useState(320);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [nickname, setNickname] = useState('');
+  const [avatar, setAvatar] = useState('');
   const [agentList, setAgentList] = useState([]); // [{ id, name, createdAt }]
   const [chatAgents, setChatAgents] = useState({}); // { chatId -> agentId }
   const [lastAgentId, setLastAgentId] = useState(null); // agent used by most recent chat
+  const [chatLlmProfiles, setChatLlmProfiles] = useState({}); // { chatId -> llmProfileId }
+  const [currentLlmProfileId, setCurrentLlmProfileId] = useState(null);
+  const [storageVersion, setStorageVersion] = useState(0);
   const savePending = useRef(null);
   const abortRef = useRef(null);
   const streamingContentRef = useRef('');  // accumulates chunks outside React state
   const streamingThinkingRef = useRef(''); // accumulates thinking/reasoning chunks
   const rafRef = useRef(null);            // requestAnimationFrame id for UI sync
   const selectedAgentRef = useRef(null); // avoid stale closure
+  const messagePanelRef = useRef(null);
 
   // Initialize sync interceptor for auto-sync (if enabled in settings)
   useSyncInterceptor();
+
+  const refreshFromStorage = useCallback(async () => {
+    await config.init();
+
+    const savedTheme = config.get('theme');
+    if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme)) {
+      setTheme(savedTheme);
+    }
+
+    const savedLocale = config.get('locale');
+    if (savedLocale) setLocalePref(savedLocale);
+
+    setNickname(config.get('general.nickname') || '');
+    setAvatar(config.get('general.avatar') || '');
+
+    const savedChats = await loadChats();
+    setChats(savedChats);
+
+    const agentMap = {};
+    const llmMap = {};
+    for (const chat of savedChats) {
+      if (chat.agentId) agentMap[chat.id] = chat.agentId;
+      if (chat.llmProfileId) llmMap[chat.id] = chat.llmProfileId;
+    }
+    setChatAgents(agentMap);
+    setChatLlmProfiles(llmMap);
+
+    const lastWithAgent = savedChats.find((c) => c.agentId);
+    setLastAgentId(lastWithAgent?.agentId || null);
+
+    if (savedChats.length === 0) {
+      setActiveChatId(null);
+    } else if (!savedChats.some((chat) => chat.id === activeChatId)) {
+      setActiveChatId(savedChats[0].id);
+    }
+
+    await llm.init();
+    const activeLlmId = llm.getActiveProfileId();
+    const selectedChat = savedChats.find((chat) => chat.id === activeChatId) || savedChats[0];
+    const chatLlmId = selectedChat?.llmProfileId;
+    setCurrentLlmProfileId(chatLlmId || activeLlmId || null);
+    setLlmReady((prev) => !prev);
+
+    const savedAgents = await listAgents();
+    setAgentList(savedAgents);
+    setStorageVersion((prev) => prev + 1);
+  }, [activeChatId]);
 
   // Load config, chats and LLM settings from OPFS on mount
   useEffect(() => {
@@ -85,6 +155,8 @@ function App() {
         // Restore persisted nickname
         const savedNickname = config.get('general.nickname');
         if (savedNickname) setNickname(savedNickname);
+        const savedAvatar = config.get('general.avatar');
+        if (savedAvatar) setAvatar(savedAvatar);
         return Promise.all([
           loadChats()
             .then((saved) => {
@@ -92,10 +164,13 @@ function App() {
                 setChats(saved);
                 // Restore per-chat agent assignments from persisted chat metadata
                 const agentMap = {};
+                const llmMap = {};
                 for (const chat of saved) {
                   if (chat.agentId) agentMap[chat.id] = chat.agentId;
+                  if (chat.llmProfileId) llmMap[chat.id] = chat.llmProfileId;
                 }
                 setChatAgents(agentMap);
+                setChatLlmProfiles(llmMap);
                 // Set lastAgentId from the most recent chat that has an agent
                 const lastWithAgent = saved.find((c) => c.agentId);
                 if (lastWithAgent) setLastAgentId(lastWithAgent.agentId);
@@ -103,7 +178,10 @@ function App() {
             })
             .catch((err) => { console.error('OPFS load failed:', err); setInitError('Failed to load chats'); }),
           llm.init()
-            .then(() => setLlmReady(true))
+            .then(() => {
+              setCurrentLlmProfileId(llm.getActiveProfileId());
+              setLlmReady(true);
+            })
             .catch((err) => { console.error('LLM init failed:', err); }),
         ]);
       })
@@ -170,8 +248,21 @@ function App() {
 
   const activeChat = chats.find((c) => c.id === activeChatId);
   const messages = activeChat ? activeChat.messages : [];
+  const selectedAgentId = activeChat?.agentId || lastAgentId || null;
+  const activeAgentConfig = selectedAgentId ? agentList.find((agent) => agent.id === selectedAgentId) : null;
+  const firstLlmProfileId = llm.getProfiles()[0]?.id || null;
+  const activeLlmProfileId = activeChat?.llmProfileId || activeAgentConfig?.llmProfileId || firstLlmProfileId || currentLlmProfileId || llm.getActiveProfileId();
+  const activeSandboxUrl = activeAgentConfig?.sandboxUrl || null;
+
+  const getFirstLlmProfileId = useCallback(() => llm.getProfiles()[0]?.id || null, []);
+  const getAgentDefaultLlmId = useCallback((agentId) => {
+    const agent = agentList.find((a) => a.id === agentId);
+    return agent?.llmProfileId || getFirstLlmProfileId();
+  }, [agentList, getFirstLlmProfileId]);
 
   const handleNewChat = useCallback(() => {
+    messagePanelRef.current?.focusInput();
+
     // If the active chat is still empty, just keep it — don't spawn another
     const current = chats.find((c) => c.id === activeChatId);
     if (current && current.messages.length === 0) return;
@@ -179,12 +270,15 @@ function App() {
     // Use last used agent, falling back to first available agent
     const agentId = lastAgentId ?? (agentList.length > 0 ? agentList[0].id : null);
 
+    const llmProfileId = getAgentDefaultLlmId(agentId) || currentLlmProfileId || llm.getActiveProfileId();
+
     const newChat = {
       id: generateId(),
       title: 'New Chat',
       lastMessage: '',
       updatedAt: formatTime(new Date()),
       messages: [],
+      ...(llmProfileId && { llmProfileId }),
       ...(agentId && { agentId }),
     };
     setChats((prev) => [newChat, ...prev]);
@@ -193,7 +287,11 @@ function App() {
     if (agentId) {
       setChatAgents((prev) => ({ ...prev, [newChat.id]: agentId }));
     }
-  }, [chats, activeChatId, agentList, lastAgentId]);
+    if (llmProfileId) {
+      setChatLlmProfiles((prev) => ({ ...prev, [newChat.id]: llmProfileId }));
+      setCurrentLlmProfileId(llmProfileId);
+    }
+  }, [chats, activeChatId, agentList, lastAgentId, currentLlmProfileId, getAgentDefaultLlmId]);
 
   const handleSelectChat = useCallback((chatId) => {
     setActiveChatId(chatId);
@@ -203,6 +301,8 @@ function App() {
     if (agentId) {
       setLastAgentId(agentId);
     }
+    const llmProfileId = chat?.llmProfileId || llm.getActiveProfileId();
+    setCurrentLlmProfileId(llmProfileId || null);
   }, [chats]);
 
   const handleDeleteChat = useCallback(async (chatId) => {
@@ -211,6 +311,11 @@ function App() {
 
     // Clean up agent assignment for this chat
     setChatAgents((prev) => {
+      const next = { ...prev };
+      delete next[chatId];
+      return next;
+    });
+    setChatLlmProfiles((prev) => {
       const next = { ...prev };
       delete next[chatId];
       return next;
@@ -232,7 +337,10 @@ function App() {
     // Prevent duplicate calls (StrictMode double-invoke guard)
     if (abortRef.current) return;
 
-    if (!llm.isConfigured()) {
+    const chatAgentId = opts.agentId ?? chatAgents[chatId] ?? null;
+    const agentConfig = chatAgentId ? agentList.find((agent) => agent.id === chatAgentId) : null;
+    const llmProfileId = opts.llmProfileId ?? chatLlmProfiles[chatId] ?? agentConfig?.llmProfileId ?? getFirstLlmProfileId() ?? currentLlmProfileId ?? llm.getActiveProfileId();
+    if (!llm.isProfileConfigured(llmProfileId)) {
       const hintId = generateId();
       setChats((prev) =>
         prev.map((c) =>
@@ -306,20 +414,20 @@ function App() {
     };
 
     try {
-      const activeConfig = llm.getActiveConfig();
+      const activeConfig = llm.getActiveConfig(llmProfileId);
 
-      const chatAgentId = opts.agentId ?? chatAgents[chatId] ?? null;
-      const sandboxUrl = selectedAgentRef.current;
+      const sandboxUrl = opts.sandboxUrl ?? agentConfig?.sandboxUrl ?? null;
       const hasToolContext = sandboxUrl || chatAgentId;
 
       const result = await runAgentLoop({
-        messages: chatMessages,
+        messages: expandMessagesForLlm(chatMessages),
         systemPrompt: hasToolContext ? AGENT_SYSTEM_PROMPT : '',
         agentUrl: sandboxUrl,
         agentId: chatAgentId,
         signal: controller.signal,
         provider: activeConfig.provider,
         model: activeConfig.model,
+        llmProfileId,
         onUpdate: ({ content, thinking, toolCalls: tcList }) => {
           streamingContentRef.current = content;
           if (thinking) streamingThinkingRef.current = thinking;
@@ -362,26 +470,28 @@ function App() {
       streamingThinkingRef.current = '';
       setStreaming(false);
     }
-  }, [chatAgents]);
+  }, [agentList, chatAgents, chatLlmProfiles, currentLlmProfileId, getFirstLlmProfileId]);
 
   const handleStopStreaming = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
   }, []);
 
   const handleSendMessage = useCallback(
-    (text, images) => {
+    (text, images, contextFiles) => {
       if (streaming) return; // prevent sending while streaming
 
       if (!activeChatId) {
         // Auto-create a chat if none selected
-        const userMsg = { id: generateId(), role: 'user', content: text, ...(images && { images }) };
+        const userMsg = { id: generateId(), role: 'user', content: text, ...(images && { images }), ...(contextFiles && { contextFiles }) };
         const agentId = lastAgentId ?? (agentList.length > 0 ? agentList[0].id : null);
+        const llmProfileId = getAgentDefaultLlmId(agentId) || currentLlmProfileId || llm.getActiveProfileId();
         const newChat = {
           id: generateId(),
           title: text.slice(0, 30) + (text.length > 30 ? '...' : ''),
           lastMessage: text || (images ? '[Image]' : ''),
           updatedAt: formatTime(new Date()),
           messages: [userMsg],
+          ...(llmProfileId && { llmProfileId }),
           ...(agentId && { agentId }),
         };
         setChats((prev) => [newChat, ...prev]);
@@ -389,11 +499,14 @@ function App() {
         if (agentId) {
           setChatAgents((prev) => ({ ...prev, [newChat.id]: agentId }));
         }
-        setTimeout(() => streamResponse(newChat.id, [userMsg], { agentId }), 0);
+        if (llmProfileId) {
+          setChatLlmProfiles((prev) => ({ ...prev, [newChat.id]: llmProfileId }));
+        }
+        setTimeout(() => streamResponse(newChat.id, [userMsg], { agentId, llmProfileId }), 0);
         return;
       }
 
-      const userMsg = { id: generateId(), role: 'user', content: text, ...(images && { images }) };
+      const userMsg = { id: generateId(), role: 'user', content: text, ...(images && { images }), ...(contextFiles && { contextFiles }) };
       const chatId = activeChatId;
 
       setChats((prev) => {
@@ -416,8 +529,23 @@ function App() {
         return updated;
       });
     },
-    [activeChatId, streaming, streamResponse, lastAgentId, agentList]
+    [activeChatId, streaming, streamResponse, lastAgentId, agentList, currentLlmProfileId, getAgentDefaultLlmId]
   );
+
+  const handleSelectLLM = useCallback(async (profileId) => {
+    await llm.selectProfile(profileId || null);
+    setCurrentLlmProfileId(profileId || null);
+    setLlmReady((prev) => !prev);
+    if (!activeChatId) return;
+    setChatLlmProfiles((prev) => ({ ...prev, [activeChatId]: profileId || null }));
+    setChats((prev) =>
+      prev.map((c) =>
+        c.id === activeChatId
+          ? { ...c, llmProfileId: profileId || null }
+          : c
+      )
+    );
+  }, [activeChatId]);
 
   // Track online/offline status
   useEffect(() => {
@@ -472,6 +600,7 @@ function App() {
         </button>
       )}
       <MessagePanel
+        ref={messagePanelRef}
         messages={messages}
         activeChatId={activeChatId}
         onSendMessage={handleSendMessage}
@@ -487,20 +616,56 @@ function App() {
         }}
         streaming={streaming}
         onStopStreaming={handleStopStreaming}
-        llmConfig={llm.getActiveConfig()}
+        llmConfig={llm.getActiveConfig(activeLlmProfileId)}
+        llmProfiles={llm.getProfiles()}
+        activeLlmProfileId={activeLlmProfileId}
+        onSelectLLM={handleSelectLLM}
         providers={llm.getProviders()}
         onConfigureLLM={async (cfg) => {
-          await llm.configure(cfg);
+          const saved = await llm.configure(cfg);
+          setCurrentLlmProfileId(saved.id);
+          if (activeChatId) {
+            setChatLlmProfiles((prev) => ({ ...prev, [activeChatId]: saved.id }));
+            setChats((prev) => prev.map((c) => c.id === activeChatId ? { ...c, llmProfileId: saved.id } : c));
+          }
+          setLlmReady((prev) => !prev);
+          return saved;
+        }}
+        onDeleteLLM={async (profileId) => {
+          await llm.deleteProfile(profileId);
+          const nextId = llm.getActiveProfileId();
+          setCurrentLlmProfileId(nextId);
+          setChatLlmProfiles((prev) => {
+            const next = { ...prev };
+            for (const [chatId, id] of Object.entries(next)) {
+              if (id === profileId) {
+                if (nextId) next[chatId] = nextId;
+                else delete next[chatId];
+              }
+            }
+            return next;
+          });
+          setChats((prev) => prev.map((c) => c.llmProfileId === profileId ? { ...c, llmProfileId: nextId } : c));
+          const agentsUsingProfile = agentList.filter((agent) => agent.llmProfileId === profileId);
+          if (agentsUsingProfile.length > 0) {
+            await Promise.all(agentsUsingProfile.map((agent) => updateAgentConfig(agent.id, { llmProfileId: null })));
+            setAgentList(await listAgents());
+          }
           setLlmReady((prev) => !prev);
         }}
-        onFetchModels={(providerId, config) => llm.fetchModels(providerId, config)}
+        onFetchModels={(providerId, config, profileId) => llm.fetchModels(providerId, config, profileId)}
         theme={theme}
         onThemeChange={handleThemeChange}
         agents={agents}
-        selectedAgentUrl={selectedAgentUrl}
+        selectedAgentUrl={activeSandboxUrl}
         onSelectAgent={async (url) => {
-          setSelectedAgentUrl(url);
-          selectedAgentRef.current = url;
+          if (activeAgentConfig) {
+            await updateAgentConfig(activeAgentConfig.id, { sandboxUrl: url || null });
+            const updated = await listAgents();
+            setAgentList(updated);
+          }
+          setSelectedAgentUrl(url || null);
+          selectedAgentRef.current = url || null;
           await config.set('selectedAgent', url);
         }}
         onAgentsChange={async (newAgents) => {
@@ -523,10 +688,15 @@ function App() {
           setAgents(newAgents);
           const toSave = nonE2bAgents.map(({ url, name }) => ({ url, name }));
           await config.set('agents', toSave);
-          // Auto-select first connected agent when nothing is selected, or if current selection was removed
-          if (!selectedAgentUrl || !newAgents.some((a) => a.url === selectedAgentUrl)) {
-            const connected = newAgents.filter((a) => a.status === 'connected');
-            const next = connected.length > 0 ? connected[0].url : null;
+          const validSandboxUrls = new Set(newAgents.map((agent) => agent.url));
+          const agentsWithRemovedSandbox = agentList.filter((agent) => agent.sandboxUrl && !validSandboxUrls.has(agent.sandboxUrl));
+          if (agentsWithRemovedSandbox.length > 0) {
+            await Promise.all(agentsWithRemovedSandbox.map((agent) => updateAgentConfig(agent.id, { sandboxUrl: null })));
+            setAgentList(await listAgents());
+          }
+          // Keep the global file-manager sandbox valid, but don't auto-enable sandbox use for chats.
+          if (selectedAgentUrl && !newAgents.some((a) => a.url === selectedAgentUrl)) {
+            const next = null;
             setSelectedAgentUrl(next);
             selectedAgentRef.current = next;
             await config.set('selectedAgent', next);
@@ -542,15 +712,6 @@ function App() {
             const e2bAgent = { url: E2B_AGENT_ID, name: 'E2B Cloud', status: connected ? 'connected' : 'error', isE2b: true, sandboxId: e2bSandboxInfo.sandboxId };
             setAgents((prev) => {
               const updated = [...prev.filter((a) => a.url !== E2B_AGENT_ID), e2bAgent];
-              if (connected) {
-                // Auto-select E2B if nothing else is connected
-                const hasConnected = updated.some((a) => a.status === 'connected');
-                if (!hasConnected || !selectedAgentUrl) {
-                  setSelectedAgentUrl(E2B_AGENT_ID);
-                  selectedAgentRef.current = E2B_AGENT_ID;
-                  config.set('selectedAgent', E2B_AGENT_ID);
-                }
-              }
               return updated;
             });
             if (error) throw new Error(`E2B sandbox failed: ${error}`);
@@ -579,32 +740,50 @@ function App() {
           setNickname(newNickname);
           await config.set('general.nickname', newNickname);
         }}
+        avatar={avatar}
+        onAvatarChange={async (newAvatar) => {
+          setAvatar(newAvatar);
+          await config.set('general.avatar', newAvatar || null);
+        }}
         agentList={agentList}
-        agentId={activeChatId ? chatAgents[activeChatId] || null : null}
+        agentId={activeChatId ? chatAgents[activeChatId] || null : lastAgentId}
         onAgentChange={async (chatId, newAgentId) => {
-          setChatAgents((prev) => ({ ...prev, [chatId]: newAgentId }));
-          // Also update the chat's persisted agentId and tracking
-          setChats((prev) =>
-            prev.map((c) =>
-              c.id === chatId
-                ? { ...c, agentId: newAgentId }
-                : c
-            )
-          );
+          const llmProfileId = getAgentDefaultLlmId(newAgentId);
           if (newAgentId) {
             setLastAgentId(newAgentId);
           }
+          if (llmProfileId) {
+            setCurrentLlmProfileId(llmProfileId);
+          }
+
+          if (!chatId) return;
+
+          setChatAgents((prev) => ({ ...prev, [chatId]: newAgentId }));
+          if (llmProfileId) {
+            setChatLlmProfiles((prev) => ({ ...prev, [chatId]: llmProfileId }));
+          }
+
+          // Switching agents applies that agent's default LLM to the current chat.
+          // The LLM selector can still override the chat after this.
+          setChats((prev) =>
+            prev.map((c) =>
+              c.id === chatId
+                ? { ...c, agentId: newAgentId, ...(llmProfileId && { llmProfileId }) }
+                : c
+            )
+          );
         }}
         onAgentListChange={async (newList) => {
           setAgentList(newList);
         }}
+        onStorageRestored={refreshFromStorage}
       />
       {showFileManage && (
         <Suspense fallback={null}>
           <FileManage
             show={showFileManage}
             onClose={() => setShowFileManage(false)}
-            refreshTrigger={chats.length}
+            refreshTrigger={storageVersion}
             width={fileManageWidth}
             onWidthChange={setFileManageWidth}
           />

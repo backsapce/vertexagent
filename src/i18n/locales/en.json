@@ -46,6 +46,7 @@
         "language": "Language",
         "agents": "Agents",
         "skills": "Skills",
+        "tools": "Tools",
         "sync": "Sync",
         "cancel": "Cancel",
         "save": "Save"
@@ -55,11 +56,22 @@
         "desc": "Configure general application settings.",
         "nickname": "Assistant Nickname",
         "nicknamePlaceholder": "Enter a nickname for the assistant...",
-        "nicknameHint": "This name will be displayed as the assistant's name in conversations."
+        "nicknameHint": "This name will be displayed as the assistant's name in conversations.",
+        "avatar": "Helper Avatar",
+        "avatarUpload": "Upload",
+        "avatarRemove": "Remove",
+        "avatarHint": "Upload an image to use as the assistant avatar in conversations.",
+        "avatarLoadFailed": "Avatar image failed to load.",
+        "avatarUploadFailed": "Could not use that image."
     },
     "llmSettings": {
         "title": "LLM Configuration",
-        "desc": "Configure your LLM provider, API key, and model.",
+        "desc": "Configure multiple LLM profiles, then choose one per chat.",
+        "profile": "LLM Profile",
+        "profileName": "Profile Name",
+        "profileNamePlaceholder": "Work GPT-4.1, Local Qwen...",
+        "addProfile": "Add Profile",
+        "deleteProfile": "Delete Profile",
         "provider": "Provider",
         "selectProvider": "Select a provider...",
         "apiKey": "API Key",
@@ -156,6 +168,15 @@
         "enableAll": "Enable All",
         "disableAll": "Disable All"
     },
+    "toolSettings": {
+        "title": "Tools",
+        "desc": "Enable or disable agent tools. Disabled tools won't be sent to the model and cannot be executed.",
+        "empty": "No tools available.",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "enableAll": "Enable All",
+        "disableAll": "Disable All"
+    },
     "agentSettings": {
         "title": "Agents",
         "desc": "Manage agents. Each agent has its own isolated workspace with separate memory and files. Global skills are shared across all agents.",
@@ -163,7 +184,11 @@
         "addAgent": "Add Agent",
         "removeAgent": "Remove agent",
         "created": "Created",
-        "rename": "Click name to rename"
+        "rename": "Click name to rename",
+        "defaultLlm": "Default LLM",
+        "firstConfiguredLlm": "First configured LLM",
+        "sandbox": "Sandbox",
+        "noSandbox": "Do not use sandbox"
     },
     "errors": {
         "noLLMConfigured": "Please configure an LLM provider in Settings.",
@@ -283,6 +308,7 @@
         "uploadSuccess": "Upload completed successfully.",
         "uploadFailed": "Upload failed: {error}",
         "downloadSuccess": "Download completed successfully.",
+        "downloadSuccessWithCount": "Download completed successfully. Synced {count} file(s) locally.",
         "downloadFailed": "Download failed: {error}",
         "enableAutoSync": "Enable Auto Sync",
         "autoSyncHint": "This will perform a full sync first, then automatically push changes on each local edit.",

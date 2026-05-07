@@ -16,6 +16,8 @@
 /* ─── Dark theme (default) ────────────────────────────────────── */
 :root,
 [data-theme="dark"] {
+  color-scheme: dark;
+
   /* Page */
   --color-bg:              #0b0f14;
   --color-text:            #e7edf5;
@@ -87,6 +89,8 @@
 
 /* ─── Light theme ─────────────────────────────────────────────── */
 [data-theme="light"] {
+  color-scheme: light;
+
   /* Page */
   --color-bg:              #f6f8fb;
   --color-text:            #18202b;

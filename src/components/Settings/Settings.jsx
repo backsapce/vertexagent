@@ -5,17 +5,52 @@ import { useI18n } from '../../i18n/context';
 import { SUPPORTED_LOCALES } from '../../i18n/locales';
 import { X, Lock, Plug, Sun, Moon, Monitor, UploadCloud, DownloadCloud, AlertTriangle, Globe, ChevronDown, User, Cloud, Layers } from '../Icons/Icons';
 import { listAllSkills, setSkillEnabled } from '../../agent/skills';
-import { createAgent, deleteAgent, updateAgentName, listAgents } from '../../agents/agents';
+import { listAllTools, setToolEnabled } from '../../agent/tools';
+import { createAgent, deleteAgent, updateAgentName, updateAgentConfig, listAgents } from '../../agents/agents';
 import { saveSyncSettings, testSyncConnection, fullSyncToServer, fullSyncFromServer } from '../../sync/syncManager';
 import config from '../../config/config';
 import './Settings.css';
+
+const AVATAR_SIZE = 256;
+
+function fileToAvatarDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file?.type?.startsWith('image/')) {
+      reject(new Error('Invalid image file'));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read image'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = AVATAR_SIZE;
+        canvas.height = AVATAR_SIZE;
+        const ctx = canvas.getContext('2d');
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2;
+        const sy = (img.height - side) / 2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
+        resolve(canvas.toDataURL('image/webp', 0.86));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 const Settings = ({
   show,
   onClose,
   llmConfig,
+  llmProfiles = [],
+  activeLlmProfileId,
   providers,
   onConfigureLLM,
+  onDeleteLLM,
   onFetchModels,
   theme,
   onThemeChange,
@@ -25,12 +60,17 @@ const Settings = ({
   onFactoryReset,
   nickname,
   onNicknameChange,
-  agentList: _agentList,
+  avatar,
+  onAvatarChange,
+  agentList = [],
   onAgentListChange,
+  onStorageRestored,
 }) => {
   const { t, localePref, changeLocale } = useI18n();
   const [settingsTab, setSettingsTab] = useState('llm');
   const [settingsForm, setSettingsForm] = useState({
+    id: null,
+    name: '',
     provider: '',
     apiKey: '',
     baseUrl: '',
@@ -40,6 +80,7 @@ const Settings = ({
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(null);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [editingLlmId, setEditingLlmId] = useState(null);
   const modelComboRef = useRef(null);
   const [newAgentUrl, setNewAgentUrl] = useState('');
   const [newAgentChecking, setNewAgentChecking] = useState(false);
@@ -53,12 +94,17 @@ const Settings = ({
   const [factoryResetting, setFactoryResetting] = useState(false);
   const zipInputRef = useRef(null);
   const [localNickname, setLocalNickname] = useState(nickname || '');
+  const [localAvatar, setLocalAvatar] = useState(avatar || '');
+  const [avatarError, setAvatarError] = useState(null);
+  const avatarInputRef = useRef(null);
   const [agentAddMode, setAgentAddMode] = useState('server'); // 'server' | 'e2b'
   const [e2bApiKeyInput, setE2bApiKeyInput] = useState('');
   const [e2bEnabling, setE2bEnabling] = useState(false);
   const [e2bLocalError, setE2bLocalError] = useState(null);
   const [skillsList, setSkillsList] = useState([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
+  const [toolsList, setToolsList] = useState([]);
+  const [toolsLoading, setToolsLoading] = useState(false);
   const [agentsTabList, setAgentsTabList] = useState([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState(null);
@@ -83,6 +129,10 @@ const Settings = ({
   const [syncMessage, setSyncMessage] = useState(null);
   const [syncLastSynced, setSyncLastSynced] = useState(null);
   const [syncLastError, setSyncLastError] = useState(null);
+
+  useEffect(() => {
+    setAgentsTabList(agentList);
+  }, [agentList]);
 
   // Load sync settings when tab changes to sync
   useEffect(() => {
@@ -198,6 +248,13 @@ const Settings = ({
     onAgentListChange?.(updated);
   };
 
+  const handleAgentDefaultChange = async (id, patch) => {
+    await updateAgentConfig(id, patch);
+    const updated = await listAgents();
+    setAgentsTabList(updated);
+    onAgentListChange?.(updated);
+  };
+
   // Load skills when tab changes to skills
   useEffect(() => {
     if (settingsTab === 'skills') {
@@ -221,29 +278,74 @@ const Settings = ({
     setSkillsList((prev) => prev.map((s) => ({ ...s, enabled })));
   };
 
-  // Initialize form when opening
+  // Load tools when tab changes to tools
   useEffect(() => {
-    if (!show) return;
-    setLocalNickname(nickname || '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show]);
+    if (settingsTab === 'tools') {
+      setToolsLoading(true);
+      try {
+        setToolsList(listAllTools());
+      } catch (err) {
+        console.error('Failed to load tools:', err);
+      } finally {
+        setToolsLoading(false);
+      }
+    }
+  }, [settingsTab]);
+
+  const handleToolToggle = async (toolName, enabled) => {
+    await setToolEnabled(toolName, enabled);
+    setToolsList((prev) => prev.map((tool) => (tool.name === toolName ? { ...tool, enabled } : tool)));
+  };
+
+  const handleBulkToolToggle = async (enabled) => {
+    for (const tool of toolsList) {
+      await setToolEnabled(tool.name, enabled);
+    }
+    setToolsList((prev) => prev.map((tool) => ({ ...tool, enabled })));
+  };
 
   // Initialize form when opening
   useEffect(() => {
     if (!show) return;
-    if (llmConfig) {
+    setLocalNickname(nickname || '');
+    setLocalAvatar(avatar || '');
+    setAvatarError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show]);
+
+  const handleAvatarUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setAvatarError(null);
+      setLocalAvatar(await fileToAvatarDataUrl(file));
+    } catch (err) {
+      setAvatarError(err.message || t('generalSettings.avatarUploadFailed'));
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  // Initialize form when opening
+  useEffect(() => {
+    if (!show) return;
+    const selected = llmProfiles.find((p) => p.id === activeLlmProfileId) || llmConfig;
+    if (selected) {
+      setEditingLlmId(selected.id || null);
       setSettingsForm({
-        provider: llmConfig.provider || '',
+        id: selected.id || null,
+        name: selected.name || '',
+        provider: selected.provider || '',
         apiKey: '',
-        baseUrl: llmConfig.baseUrl || '',
-        model: llmConfig.model || '',
+        baseUrl: selected.baseUrl || '',
+        model: selected.model || '',
       });
     }
     setModelList([]);
     setModelsError(null);
     // Auto-fetch models if provider is configured with a saved key
-    if (llmConfig?.provider && llmConfig?.hasApiKey) {
-      fetchModels(llmConfig.provider, '', llmConfig.baseUrl || '');
+    if (selected?.provider && selected?.hasApiKey) {
+      fetchModels(selected.provider, '', selected.baseUrl || '', selected.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show]);
@@ -270,19 +372,20 @@ const Settings = ({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [modelDropdownOpen]);
 
-  const fetchModels = async (providerId, apiKey, baseUrl) => {
+  const fetchModels = async (providerId, apiKey, baseUrl, profileId = editingLlmId) => {
     if (!providerId) {
       setModelList([]);
       return;
     }
-    if (!apiKey && !llmConfig?.hasApiKey) {
+    const selected = llmProfiles.find((p) => p.id === profileId) || llmConfig;
+    if (!apiKey && !selected?.hasApiKey) {
       setModelList([]);
       return;
     }
     setModelsLoading(true);
     setModelsError(null);
     try {
-      const models = await onFetchModels(providerId, { apiKey, baseUrl: baseUrl || null });
+      const models = await onFetchModels(providerId, { apiKey, baseUrl: baseUrl || null }, profileId);
       setModelList(models || []);
     } catch (err) {
       setModelsError(err.message);
@@ -293,6 +396,7 @@ const Settings = ({
   };
 
   const selectedProvider = providers?.find((p) => p.id === settingsForm.provider);
+  const selectedLlmProfile = llmProfiles.find((p) => p.id === editingLlmId) || null;
 
   const handleAddAgent = async () => {
     const url = newAgentUrl.trim().replace(/\/+$/, '');
@@ -395,12 +499,54 @@ const Settings = ({
   const handleSaveSettings = async () => {
     if (!settingsForm.provider) return;
     await onConfigureLLM({
+      id: editingLlmId || null,
+      name: settingsForm.name.trim() || undefined,
       provider: settingsForm.provider,
       ...(settingsForm.apiKey && { apiKey: settingsForm.apiKey }),
       baseUrl: settingsForm.baseUrl || null,
       model: settingsForm.model || null,
     });
     onClose();
+  };
+
+  const handleEditLlmProfile = (profileId) => {
+    const profile = llmProfiles.find((p) => p.id === profileId);
+    if (!profile) return;
+    setEditingLlmId(profile.id);
+    setSettingsForm({
+      id: profile.id,
+      name: profile.name || '',
+      provider: profile.provider || '',
+      apiKey: '',
+      baseUrl: profile.baseUrl || '',
+      model: profile.model || '',
+    });
+    setModelList([]);
+    setModelsError(null);
+    if (profile.provider && profile.hasApiKey) {
+      fetchModels(profile.provider, '', profile.baseUrl || '', profile.id);
+    }
+  };
+
+  const handleNewLlmProfile = () => {
+    setEditingLlmId(null);
+    setSettingsForm({
+      id: null,
+      name: '',
+      provider: '',
+      apiKey: '',
+      baseUrl: '',
+      model: '',
+    });
+    setModelList([]);
+    setModelsError(null);
+  };
+
+  const handleDeleteLlmProfile = async () => {
+    if (!editingLlmId || llmProfiles.length <= 1) return;
+    await onDeleteLLM?.(editingLlmId);
+    const next = llmProfiles.find((p) => p.id !== editingLlmId);
+    if (next) handleEditLlmProfile(next.id);
   };
 
   const handleTestSyncConnection = async () => {
@@ -457,8 +603,9 @@ const Settings = ({
     try {
       const pendingSyncSettings = getPendingSyncSettings();
       const password = syncMethod === 's3' ? (s3SecretAccessKey || getSavedS3Secret()) : (syncPassword || config.get('sync.password'));
-      await fullSyncFromServer(pendingSyncSettings.url, pendingSyncSettings.username, password, pendingSyncSettings);
-      setSyncMessage({ type: 'success', text: t('syncSettings.downloadSuccess') });
+      const result = await fullSyncFromServer(pendingSyncSettings.url, pendingSyncSettings.username, password, pendingSyncSettings);
+      await onStorageRestored?.();
+      setSyncMessage({ type: 'success', text: t('syncSettings.downloadSuccessWithCount', { count: result.downloaded ?? 0 }) });
     } catch (err) {
       setSyncMessage({ type: 'error', text: t('syncSettings.downloadFailed', { error: err.message }) });
     } finally {
@@ -562,6 +709,13 @@ const Settings = ({
               {t('settings.skills')}
             </button>
             <button
+              className={`settings-nav-item ${settingsTab === 'tools' ? 'active' : ''}`}
+              onClick={() => setSettingsTab('tools')}
+            >
+              <Plug width={16} height={16} />
+              {t('settings.tools')}
+            </button>
+            <button
               className={`settings-nav-item ${settingsTab === 'sync' ? 'active' : ''}`}
               onClick={() => setSettingsTab('sync')}
             >
@@ -575,6 +729,41 @@ const Settings = ({
             <div className="settings-section">
               <h3>{t('llmSettings.title')}</h3>
               <p className="settings-desc">{t('llmSettings.desc')}</p>
+
+              {llmProfiles.length > 0 && (
+                <>
+                  <label>{t('llmSettings.profile')}</label>
+                  <select
+                    value={editingLlmId || ''}
+                    onChange={(e) => handleEditLlmProfile(e.target.value)}
+                  >
+                    {llmProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name || `${profile.provider} / ${profile.model}`}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              <div className="settings-inline-actions">
+                <button type="button" className="settings-secondary" onClick={handleNewLlmProfile}>
+                  {t('llmSettings.addProfile')}
+                </button>
+                {editingLlmId && llmProfiles.length > 1 && (
+                  <button type="button" className="settings-secondary danger" onClick={handleDeleteLlmProfile}>
+                    {t('llmSettings.deleteProfile')}
+                  </button>
+                )}
+              </div>
+
+              <label>{t('llmSettings.profileName')}</label>
+              <input
+                type="text"
+                placeholder={t('llmSettings.profileNamePlaceholder')}
+                value={settingsForm.name}
+                onChange={(e) => setSettingsForm((f) => ({ ...f, name: e.target.value }))}
+              />
 
               <label>{t('llmSettings.provider')}</label>
               <select
@@ -590,12 +779,12 @@ const Settings = ({
               <label>{t('llmSettings.apiKey')}</label>
               <input
                 type="password"
-                placeholder={llmConfig?.hasApiKey ? t('llmSettings.apiKeyMask') : t('llmSettings.enterApiKey')}
+                placeholder={selectedLlmProfile?.hasApiKey ? t('llmSettings.apiKeyMask') : t('llmSettings.enterApiKey')}
                 value={settingsForm.apiKey}
                 onChange={(e) => setSettingsForm((f) => ({ ...f, apiKey: e.target.value }))}
                 onBlur={handleApiKeyBlur}
               />
-              {llmConfig?.hasApiKey && !settingsForm.apiKey && (
+              {selectedLlmProfile?.hasApiKey && !settingsForm.apiKey && (
                 <p className="settings-hint">{t('llmSettings.apiKeySaved')}</p>
               )}
 
@@ -710,12 +899,45 @@ const Settings = ({
               />
               <p className="settings-hint">{t('generalSettings.nicknameHint')}</p>
 
+              <label>{t('generalSettings.avatar')}</label>
+              <div className="avatar-setting-row">
+                <div className="avatar-preview">
+                  {localAvatar ? (
+                    <img src={localAvatar} alt="" onError={() => setAvatarError(t('generalSettings.avatarLoadFailed'))} />
+                  ) : (
+                    <span>{Array.from((localNickname.trim() || t('message.assistant')))[0]?.toUpperCase() || 'V'}</span>
+                  )}
+                </div>
+                <div className="avatar-actions">
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="avatar-file-input"
+                    onChange={handleAvatarUpload}
+                  />
+                  <button className="settings-secondary" onClick={() => avatarInputRef.current?.click()}>
+                    <UploadCloud width={16} height={16} />
+                    {t('generalSettings.avatarUpload')}
+                  </button>
+                  {localAvatar && (
+                    <button className="settings-secondary" onClick={() => setLocalAvatar('')}>
+                      <X width={16} height={16} />
+                      {t('generalSettings.avatarRemove')}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="settings-hint">{t('generalSettings.avatarHint')}</p>
+              {avatarError && <p className="settings-error">{avatarError}</p>}
+
               <div className="settings-actions">
                 <button className="settings-cancel" onClick={onClose}>{t('settings.cancel')}</button>
                 <button
                   className="settings-save"
                   onClick={() => {
                     onNicknameChange?.(localNickname);
+                    onAvatarChange?.(localAvatar);
                     onClose();
                   }}
                 >
@@ -919,6 +1141,7 @@ const Settings = ({
                       setDataMessage(null);
                       try {
                         await importFromZip(file);
+                        await onStorageRestored?.();
                         setDataMessage({ type: 'success', text: t('dataSettings.importSuccess') });
                       } catch (err) {
                         setDataMessage({ type: 'error', text: t('dataSettings.importFailed', { error: err.message }) });
@@ -1074,6 +1297,36 @@ const Settings = ({
                             {t('agentSettings.created')} {new Date(agent.createdAt).toLocaleDateString()}
                           </div>
                           <div className="agent-id-label">{agent.id}</div>
+                          <div className="agent-defaults">
+                            <label>
+                              {t('agentSettings.defaultLlm')}
+                              <select
+                                value={agent.llmProfileId || ''}
+                                onChange={(e) => handleAgentDefaultChange(agent.id, { llmProfileId: e.target.value || null })}
+                              >
+                                <option value="">{t('agentSettings.firstConfiguredLlm')}</option>
+                                {llmProfiles.map((profile) => (
+                                  <option key={profile.id} value={profile.id}>
+                                    {profile.name || `${profile.provider} / ${profile.model}`}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              {t('agentSettings.sandbox')}
+                              <select
+                                value={agent.sandboxUrl || ''}
+                                onChange={(e) => handleAgentDefaultChange(agent.id, { sandboxUrl: e.target.value || null })}
+                              >
+                                <option value="">{t('agentSettings.noSandbox')}</option>
+                                {agents.map((sandbox) => (
+                                  <option key={sandbox.url} value={sandbox.url}>
+                                    {sandbox.name}{sandbox.status !== 'connected' ? ` (${sandbox.status})` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
                         </div>
                         {agentsTabList.length > 1 && (
                           <button
@@ -1134,6 +1387,58 @@ const Settings = ({
                             type="checkbox"
                             checked={skill.enabled}
                             onChange={(e) => handleSkillToggle(skill.name, e.target.checked)}
+                          />
+                          <span className="skill-toggle-slider"></span>
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {settingsTab === 'tools' && (
+            <div className="settings-section">
+              <h3>{t('toolSettings.title')}</h3>
+              <p className="settings-desc">{t('toolSettings.desc')}</p>
+
+              {toolsLoading && (
+                <div className="skills-loading">{t('filemanage.loading')}</div>
+              )}
+
+              {!toolsLoading && toolsList.length === 0 && (
+                <div className="sandboxes-empty">{t('toolSettings.empty')}</div>
+              )}
+
+              {!toolsLoading && toolsList.length > 0 && (
+                <>
+                  <div className="skills-bulk-actions">
+                    <button
+                      className="skills-bulk-btn"
+                      onClick={() => handleBulkToolToggle(true)}
+                    >
+                      {t('toolSettings.enableAll')}
+                    </button>
+                    <button
+                      className="skills-bulk-btn"
+                      onClick={() => handleBulkToolToggle(false)}
+                    >
+                      {t('toolSettings.disableAll')}
+                    </button>
+                  </div>
+
+                  <div className="skills-list">
+                    {toolsList.map((tool) => (
+                      <div key={tool.name} className={`skill-item ${tool.enabled ? 'enabled' : 'disabled'}`}>
+                        <div className="skill-info">
+                          <div className="skill-name">{tool.name}</div>
+                          <div className="skill-desc">{tool.description}</div>
+                        </div>
+                        <label className="skill-toggle">
+                          <input
+                            type="checkbox"
+                            checked={tool.enabled}
+                            onChange={(e) => handleToolToggle(tool.name, e.target.checked)}
                           />
                           <span className="skill-toggle-slider"></span>
                         </label>
