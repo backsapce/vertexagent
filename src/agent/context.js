@@ -216,6 +216,8 @@ function estimateTokens(messages, systemPrompt) {
   let total = systemPrompt ? systemPrompt.length : 0;
   for (const msg of messages) {
     if (msg.content) total += msg.content.length;
+    if (msg.thinking) total += msg.thinking.length;
+    if (msg.reasoning_content) total += msg.reasoning_content.length;
     if (msg.tool_calls) total += JSON.stringify(msg.tool_calls).length;
     if (msg.name) total += msg.name.length;
   }

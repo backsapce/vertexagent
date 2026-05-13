@@ -133,8 +133,8 @@ registry.register({
   async handler({ command }, ctx) {
     const result = await executeCommand(command, ctx.agentUrl);
     let out = `Exit code: ${result.code}`;
-    if (result.platform || result.shell || result.cwd) {
-      out += `\nEnvironment: platform=${result.platform || 'unknown'}, shell=${result.shell || 'unknown'}, cwd=${result.cwd || 'unknown'}`;
+    if (result.platform || result.shell || result.cwd || result.filesRoot) {
+      out += `\nEnvironment: platform=${result.platform || 'unknown'}, shell=${result.shell || 'unknown'}, cwd=${result.cwd || 'unknown'}, filesRoot=${result.filesRoot || 'unknown'}`;
     }
     if (result.stdout) out += `\nStdout:\n${result.stdout}`;
     if (result.stderr) out += `\nStderr:\n${result.stderr}`;
@@ -146,13 +146,13 @@ registry.register({
   name: 'read_file',
   schema: {
     description:
-      'Read the contents of a file. Use this to examine files, check configuration, or inspect source code.',
+      'Read the contents of a file from the active agent file root. Use this to examine files, check configuration, or inspect source code.',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Path to the file to read',
+          description: 'Path to the file to read, relative to the agent file root',
         },
       },
       required: ['path'],
@@ -180,13 +180,13 @@ registry.register({
   name: 'write_file',
   schema: {
     description:
-      'Write content to a file. Creates the file if it does not exist, overwrites if it does.',
+      'Write content to a file in the active agent file root. Creates the file if it does not exist, overwrites if it does.',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Path to the file to write',
+          description: 'Path to the file to write, relative to the agent file root',
         },
         content: {
           type: 'string',
@@ -218,13 +218,13 @@ registry.register({
   name: 'list_files',
   schema: {
     description:
-      'List files and directories at a given path. Use this to explore directory contents.',
+      'List files and directories in the active agent file root. Use this to explore directory contents.',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Directory path to list (empty for root)',
+          description: 'Directory path to list, relative to the agent file root (empty for root)',
         },
       },
       required: [],

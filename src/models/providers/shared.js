@@ -6,12 +6,16 @@
 /**
  * Convert messages with images to OpenAI multimodal format.
  */
-export function formatMultimodal(messages) {
+export function formatMultimodal(messages, opts = {}) {
   return messages.map((msg) => {
     if (!msg.images?.length) {
       const formatted = { role: msg.role, content: msg.content };
       if (msg.tool_call_id) formatted.tool_call_id = msg.tool_call_id;
       if (msg.name) formatted.name = msg.name;
+      if (opts.includeReasoningContent && msg.role === 'assistant') {
+        const reasoningContent = msg.reasoning_content || msg.thinking;
+        if (reasoningContent) formatted.reasoning_content = reasoningContent;
+      }
       if (msg.tool_calls?.length) {
         formatted.tool_calls = msg.tool_calls.map((tc) => {
           if (tc.type === 'function' && tc.function) return tc;

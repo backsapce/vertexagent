@@ -20,8 +20,8 @@ jobs:
             image: vertex-agent
             context: .
           - name: agent
-            dockerfile: Dockerfile.agent
-            image: vertex-server
+            dockerfile: Dockerfile.sandbox
+            image: vertex-sandbox
             context: .
     steps:
       - uses: actions/checkout@v4

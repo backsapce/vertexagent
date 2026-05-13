@@ -38,7 +38,7 @@ export default {
     const baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
     const body = {
       model: config.model || this.defaultModel,
-      messages: formatMultimodal(messages),
+      messages: formatMultimodal(messages, { includeReasoningContent: true }),
       stream: true,
       stream_options: { include_usage: true },
       ...(opts.temperature != null && { temperature: opts.temperature }),

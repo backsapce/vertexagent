@@ -195,6 +195,7 @@ export async function runAgentLoop(opts) {
       {
         role: 'assistant',
         content,
+        ...(thinking ? { reasoning_content: thinking } : {}),
         tool_calls: toolCalls.map((tc) => ({
           id: tc.id,
           name: tc.name,

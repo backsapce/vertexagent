@@ -319,7 +319,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 0 0 14px;
+  margin: 14px 0;
 }
 
 .settings-success {

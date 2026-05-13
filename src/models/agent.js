@@ -132,9 +132,9 @@ export async function executeCommand(cmd, url) {
 }
 
 /**
- * List files from the agent server's working directory (.vertex-agent).
+ * List files from the agent server's files root.
  * Automatically attaches the saved auth token.
- * @param {string} [path] - Directory path relative to working directory (empty for root).
+ * @param {string} [path] - Directory path relative to files root (empty for root).
  * @param {string} [url] - agent host URL (optional, defaults to local /agent)
  * @returns {Promise<{id: string, name: string, type: string, children: Array}|Array>}
  */
@@ -155,7 +155,7 @@ export async function listRemoteFiles(path = '', url) {
 
 /**
  * Create a file or directory on the remote agent server.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @param {string} [content] - File content (optional, empty string if not provided)
  * @param {boolean} [isDirectory] - If true, creates a directory instead of a file
  * @param {string} [url] - agent host URL (optional, defaults to local /agent)
@@ -182,7 +182,7 @@ export async function createRemoteFile(path, content = '', isDirectory = false, 
 
 /**
  * Delete a file or directory on the remote agent server.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @param {string} [url] - agent host URL (optional, defaults to local /agent)
  * @returns {Promise<{success: boolean, message: string}>}
  */
@@ -203,7 +203,7 @@ export async function deleteRemoteFile(path, url) {
 
 /**
  * Upload a file to the remote agent server.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @param {Blob|File} file - The file to upload
  * @param {string} [url] - agent host URL (optional, defaults to local /agent)
  * @returns {Promise<{success: boolean, message: string}>}
@@ -235,7 +235,7 @@ export async function uploadRemoteFile(path, file, url) {
 
 /**
  * Download a file from the remote agent server.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @param {string} [url] - agent host URL (optional, defaults to local /agent)
  * @returns {Promise<Blob>}
  */
@@ -264,7 +264,7 @@ function getSelectedAgent() {
 
 /**
  * List files from the active agent (E2B or HTTP server).
- * @param {string} [path] - Directory path relative to working directory (empty for root).
+ * @param {string} [path] - Directory path relative to files root (empty for root).
  * @returns {Promise<{id: string, name: string, type: string, children: Array}|Array>}
  */
 export async function listFiles(path = '', url = getSelectedAgent()) {
@@ -277,7 +277,7 @@ export async function listFiles(path = '', url = getSelectedAgent()) {
 
 /**
  * Create a file or directory on the active agent.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @param {string} [content] - File content
  * @param {boolean} [isDirectory] - If true, creates a directory
  * @returns {Promise<{success: boolean, message: string}>}
@@ -292,7 +292,7 @@ export async function createFile(path, content = '', isDirectory = false) {
 
 /**
  * Delete a file or directory on the active agent.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @returns {Promise<{success: boolean, message: string}>}
  */
 export async function deleteFile(path) {
@@ -305,7 +305,7 @@ export async function deleteFile(path) {
 
 /**
  * Upload a file to the active agent.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @param {Blob|File} file - The file to upload
  * @returns {Promise<{success: boolean, message: string}>}
  */
@@ -319,7 +319,7 @@ export async function uploadFile(path, file) {
 
 /**
  * Download a file from the active agent.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @returns {Promise<Blob>}
  */
 export async function downloadFile(path) {
@@ -332,7 +332,7 @@ export async function downloadFile(path) {
 
 /**
  * Read file content as text from the active agent.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @returns {Promise<string>}
  */
 export async function readFileText(path, url = getSelectedAgent()) {
@@ -347,7 +347,7 @@ export async function readFileText(path, url = getSelectedAgent()) {
 
 /**
  * Write file content to the active agent.
- * @param {string} path - Path relative to working directory
+ * @param {string} path - Path relative to files root
  * @param {string} content - File content
  * @returns {Promise<void>}
  */

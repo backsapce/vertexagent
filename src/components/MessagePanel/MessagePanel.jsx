@@ -1,4 +1,4 @@
-import { forwardRef, lazy, Suspense, useImperativeHandle, useState, useRef, useEffect, useMemo } from 'react';
+import { forwardRef, lazy, Suspense, useImperativeHandle, useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { useI18n } from '../../i18n/context';
 import { getAgentDir } from '../../vfs/opfs';
 import { ChevronRight, Settings as SettingsIcon, Folder, File, FileEdit, MessageSquare, Plus, X, Send, Stop, Plug, PieChart, Cloud, User } from '../Icons/Icons';
@@ -11,8 +11,17 @@ const Settings = lazy(() => import('../Settings/Settings'));
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4 MB target (well under 10 MB API limit)
 const MAX_DIMENSION = 2048;
+const MESSAGE_HISTORY_PAGE_SIZE = 100;
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 48;
+const LOAD_HISTORY_TOP_THRESHOLD = 24;
 const SCROLL_DIRECTION_EPSILON = 2;
+
+function resetEmptyTextareaCaret(textarea) {
+  if (!textarea || textarea.value) return;
+  textarea.scrollLeft = 0;
+  textarea.scrollTop = 0;
+  textarea.setSelectionRange(0, 0);
+}
 
 function getMentionRange(value, caret) {
   const head = value.slice(0, caret);
@@ -329,10 +338,12 @@ const MessagePanel = forwardRef(({
   const [mentionError, setMentionError] = useState('');
   const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(MESSAGE_HISTORY_PAGE_SIZE);
   const messageListRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
   const scrollRafRef = useRef(null);
   const lastScrollTopRef = useRef(0);
+  const pendingHistoryScrollRestoreRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const selectedAgent = agentList.find((agent) => agent.id === agentId) || agentList[0];
@@ -344,10 +355,17 @@ const MessagePanel = forwardRef(({
   const selectedProvider = providers?.find((provider) => provider.id === selectedLlmProfile?.provider);
   const selectedLlmProviderLabel = selectedProvider?.name || selectedLlmProfile?.provider || t('message.noProviderConfigured');
   const selectedLlmModelLabel = selectedLlmProfile?.model || selectedLlmProfile?.name || '';
+  const showCenteredInput = !activeSessionId || messages.length === 0;
+  const visibleMessages = useMemo(() => {
+    const start = Math.max(messages.length - visibleMessageCount, 0);
+    return messages.slice(start);
+  }, [messages, visibleMessageCount]);
+  const hasHiddenMessages = visibleMessages.length < messages.length;
 
   useImperativeHandle(ref, () => ({
     focusInput() {
       textareaRef.current?.focus({ preventScroll: true });
+      resetEmptyTextareaCaret(textareaRef.current);
     },
   }), []);
 
@@ -366,6 +384,7 @@ const MessagePanel = forwardRef(({
 
   useEffect(() => {
     shouldAutoScrollRef.current = true;
+    setVisibleMessageCount(MESSAGE_HISTORY_PAGE_SIZE);
     if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
     scrollRafRef.current = requestAnimationFrame(() => {
       const list = messageListRef.current;
@@ -377,6 +396,17 @@ const MessagePanel = forwardRef(({
     });
   }, [activeSessionId]);
 
+  useLayoutEffect(() => {
+    const restore = pendingHistoryScrollRestoreRef.current;
+    if (!restore) return;
+    const list = messageListRef.current;
+    if (list) {
+      list.scrollTop = list.scrollHeight - restore.scrollHeight + restore.scrollTop;
+      lastScrollTopRef.current = list.scrollTop;
+    }
+    pendingHistoryScrollRestoreRef.current = null;
+  }, [visibleMessages.length]);
+
   useEffect(() => () => {
     if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
   }, []);
@@ -385,6 +415,14 @@ const MessagePanel = forwardRef(({
     const list = e.currentTarget;
     const isScrollingUp = list.scrollTop < lastScrollTopRef.current - SCROLL_DIRECTION_EPSILON;
     const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
+    if (hasHiddenMessages && list.scrollTop <= LOAD_HISTORY_TOP_THRESHOLD) {
+      pendingHistoryScrollRestoreRef.current = {
+        scrollHeight: list.scrollHeight,
+        scrollTop: list.scrollTop,
+      };
+      shouldAutoScrollRef.current = false;
+      setVisibleMessageCount((count) => Math.min(messages.length, count + MESSAGE_HISTORY_PAGE_SIZE));
+    }
     if (isScrollingUp) {
       shouldAutoScrollRef.current = false;
     } else if (distanceFromBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD) {
@@ -452,6 +490,7 @@ const MessagePanel = forwardRef(({
     setMentionOpen(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
+      requestAnimationFrame(() => resetEmptyTextareaCaret(textareaRef.current));
     }
   };
 
@@ -621,9 +660,17 @@ const MessagePanel = forwardRef(({
     ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
   };
 
+  const handleInputFocus = (e) => {
+    resetEmptyTextareaCaret(e.target);
+  };
+
+  const handleInputPointerUp = (e) => {
+    requestAnimationFrame(() => resetEmptyTextareaCaret(e.currentTarget));
+  };
+
 
   return (
-    <div className="message-panel">
+    <div className={`message-panel${showCenteredInput ? ' empty-input-state' : ''}`}>
       {showSettings && (
         <Suspense fallback={null}>
           <Settings
@@ -728,7 +775,11 @@ const MessagePanel = forwardRef(({
             <p className="message-empty-hint">{t('app.sendHint')}</p>
           </div>
         ) : (
-          messages.map((msg) => (
+          <>
+          {hasHiddenMessages && (
+            <div className="message-history-marker" aria-hidden="true" />
+          )}
+          {visibleMessages.map((msg) => (
             <div key={msg.id} className={`message ${msg.role}`}>
               <div className="message-avatar">
                 {msg.role === 'assistant' && avatar ? (
@@ -802,7 +853,8 @@ const MessagePanel = forwardRef(({
                 </div>
               </div>
             </div>
-          ))
+          ))}
+          </>
         )}
       </div>
 
@@ -912,6 +964,8 @@ const MessagePanel = forwardRef(({
             placeholder={t('message.placeholder')}
             value={input}
             onChange={handleInputChange}
+            onFocus={handleInputFocus}
+            onPointerUp={handleInputPointerUp}
             onKeyDown={handleKeyDown}
             rows={1}
           />

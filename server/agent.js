@@ -31,7 +31,6 @@ import process from 'node:process';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const STATIC_DIR = join(__dirname, '..', 'dist');
-const WORKING_DIR = resolve(join(process.cwd(), '.vertex-agent'));
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -40,6 +39,8 @@ const MAX_TIMEOUT = 30_000;
 const TOKEN_FILE = process.env.AGENT_TOKEN_FILE || join(process.cwd(), '.agent-token');
 const ALLOWED_ORIGINS = (process.env.AGENT_ALLOWED_ORIGINS || 'https://127.0.0.1:5173').split(',');
 const COMMAND_SHELL = process.env.AGENT_SHELL || (process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : undefined);
+const WORKSPACE_DIR = resolve(process.env.AGENT_WORKING_DIR || process.cwd());
+const FILES_ROOT_DIR = resolve(process.env.AGENT_FILES_DIR || WORKSPACE_DIR);
 
 // ─── MIME types ─────────────────────────────────────────────────────────────
 
@@ -170,11 +171,11 @@ function isSafePath(inputPath) {
   const normalizedPath = normalize(inputPath);
   // Reject paths containing .. after normalization (should already be resolved, but double-check)
   if (normalizedPath.includes('..')) return false;
-  const fullPath = join(WORKING_DIR, normalizedPath);
+  const fullPath = join(FILES_ROOT_DIR, normalizedPath);
   const resolvedPath = resolve(fullPath);
   // On Windows, compare case-insensitively
   const compareA = process.platform === 'win32' ? resolvedPath.toLowerCase() : resolvedPath;
-  const compareB = process.platform === 'win32' ? WORKING_DIR.toLowerCase() : WORKING_DIR;
+  const compareB = process.platform === 'win32' ? FILES_ROOT_DIR.toLowerCase() : FILES_ROOT_DIR;
   return compareA.startsWith(compareB + sep) || compareA === compareB;
 }
 
@@ -182,14 +183,15 @@ function isSafePath(inputPath) {
 
 function execCommand(cmd, timeout = MAX_TIMEOUT) {
   return new Promise((resolve) => {
-    exec(cmd, { timeout, maxBuffer: 10 * 1024 * 1024, shell: COMMAND_SHELL }, (error, stdout, stderr) => {
+    exec(cmd, { timeout, maxBuffer: 10 * 1024 * 1024, shell: COMMAND_SHELL, cwd: WORKSPACE_DIR }, (error, stdout, stderr) => {
       resolve({
         stdout: stdout || '',
         stderr: stderr || '',
         code: error ? error.code ?? 1 : 0,
         platform: process.platform,
         shell: COMMAND_SHELL || 'default',
-        cwd: process.cwd(),
+        cwd: WORKSPACE_DIR,
+        filesRoot: FILES_ROOT_DIR,
       });
     });
   });
@@ -250,7 +252,8 @@ const server = createServer(async (req, res) => {
       needsAuth: !authed,
       platform: process.platform,
       shell: COMMAND_SHELL || 'default',
-      cwd: process.cwd(),
+      cwd: WORKSPACE_DIR,
+      filesRoot: FILES_ROOT_DIR,
     }, req);
   }
 
@@ -337,12 +340,12 @@ const server = createServer(async (req, res) => {
     const dirPath = searchParams.get('path') || '';
 
     if (!isSafePath(dirPath)) {
-      return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
+      return json(res, 403, { error: 'Access denied: Path outside agent files root' }, req);
     }
 
     try {
       const normalizedPath = normalize(dirPath);
-      const resolvedPath = resolve(join(WORKING_DIR, normalizedPath));
+      const resolvedPath = resolve(join(FILES_ROOT_DIR, normalizedPath));
 
       if (!existsSync(resolvedPath)) {
         return json(res, 404, { error: 'Directory not found' }, req);
@@ -403,11 +406,11 @@ const server = createServer(async (req, res) => {
     }
 
     if (!isSafePath(path)) {
-      return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
+      return json(res, 403, { error: 'Access denied: Path outside agent files root' }, req);
     }
 
     try {
-      const resolvedPath = resolve(join(WORKING_DIR, normalize(path)));
+      const resolvedPath = resolve(join(FILES_ROOT_DIR, normalize(path)));
 
       if (isDirectory) {
         mkdirSync(resolvedPath, { recursive: true });
@@ -465,10 +468,10 @@ const server = createServer(async (req, res) => {
       }
 
       if (!isSafePath(filePath)) {
-        return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
+        return json(res, 403, { error: 'Access denied: Path outside agent files root' }, req);
       }
 
-      const resolvedPath = resolve(join(WORKING_DIR, normalize(filePath)));
+      const resolvedPath = resolve(join(FILES_ROOT_DIR, normalize(filePath)));
       const parentDir = join(resolvedPath, '..');
       if (!existsSync(parentDir)) mkdirSync(parentDir, { recursive: true });
       writeFileSync(resolvedPath, fileContent || '');
@@ -493,11 +496,11 @@ const server = createServer(async (req, res) => {
     }
 
     if (!isSafePath(filePath)) {
-      return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
+      return json(res, 403, { error: 'Access denied: Path outside agent files root' }, req);
     }
 
     try {
-      const resolvedPath = resolve(join(WORKING_DIR, normalize(filePath)));
+      const resolvedPath = resolve(join(FILES_ROOT_DIR, normalize(filePath)));
       if (!existsSync(resolvedPath)) {
         return json(res, 404, { error: 'File or directory not found' }, req);
       }
@@ -528,11 +531,11 @@ const server = createServer(async (req, res) => {
     }
 
     if (!isSafePath(filePath)) {
-      return json(res, 403, { error: 'Access denied: Path outside working directory' }, req);
+      return json(res, 403, { error: 'Access denied: Path outside agent files root' }, req);
     }
 
     try {
-      const resolvedPath = resolve(join(WORKING_DIR, normalize(filePath)));
+      const resolvedPath = resolve(join(FILES_ROOT_DIR, normalize(filePath)));
       if (!existsSync(resolvedPath)) {
         return json(res, 404, { error: 'File not found' }, req);
       }
@@ -575,14 +578,20 @@ loadTokens();
 
 server.listen(PORT, () => {
   try {
-    if (!existsSync(WORKING_DIR)) {
-      mkdirSync(WORKING_DIR, { recursive: true });
-      console.log(`[agent] Created working directory at ${WORKING_DIR}`);
+    if (!existsSync(WORKSPACE_DIR)) {
+      mkdirSync(WORKSPACE_DIR, { recursive: true });
+      console.log(`[agent] Created workspace directory at ${WORKSPACE_DIR}`);
+    }
+    if (!existsSync(FILES_ROOT_DIR)) {
+      mkdirSync(FILES_ROOT_DIR, { recursive: true });
+      console.log(`[agent] Created files root directory at ${FILES_ROOT_DIR}`);
     }
   } catch (err) {
-    console.warn(`[agent] Could not create working directory: ${err.message}`);
+    console.warn(`[agent] Could not create workspace or files root directory: ${err.message}`);
   }
 
   console.log(`[agent] Server listening on http://localhost:${PORT}/agent`);
   console.log(`[agent] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+  console.log(`[agent] Workspace cwd: ${WORKSPACE_DIR}`);
+  console.log(`[agent] Files root: ${FILES_ROOT_DIR}`);
 });

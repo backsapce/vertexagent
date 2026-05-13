@@ -298,6 +298,12 @@
   padding: 28px 24px;
 }
 
+.message-history-marker {
+  height: 1px;
+  max-width: 860px;
+  margin: 0 auto;
+}
+
 /* Empty state */
 .message-empty {
   display: flex;
@@ -855,6 +861,26 @@
   flex-shrink: 0;
   background: color-mix(in srgb, var(--color-bg) 72%, transparent);
   backdrop-filter: blur(18px);
+}
+
+.message-panel.empty-input-state .message-list {
+  padding-bottom: clamp(220px, 30vh, 340px);
+}
+
+.message-panel.empty-input-state .message-empty {
+  transform: translateY(-116px);
+}
+
+.message-panel.empty-input-state .message-input-area {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 52%;
+  z-index: 10;
+  transform: translateY(-50%);
+  border-top: none;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 /* Image preview strip */

@@ -95,12 +95,28 @@ Or run the Docker image:
 
 ```bash
 docker run -d \
-  --name vertex-server \
+  --name vertex-sandbox \
   --restart unless-stopped \
   -p 3099:3099 \
   -e AGENT_ALLOWED_ORIGINS=https://your-frontend-origin \
-  -v $(pwd)/.vertex-agent:/app/.vertex-agent \
-  backsapce/vertex-server:latest
+  -v $(pwd)/vertex-workspace:/home/vertex \
+  backsapce/vertex-sandbox:latest
+```
+
+## Self-Hosted Front
+
+```bash
+npm run dev:agent
+```
+
+or
+
+```bash
+docker run -d \
+  --name vertex-agent \
+  --restart unless-stopped \
+  -p 3098:80 \
+  backsapce/vertex-agent:latest
 ```
 
 The server prints a temporary pairing token on startup. Paste that token into VertexAgent Settings to exchange it for a long-lived token.
@@ -110,6 +126,8 @@ Agent Node environment variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `AGENT_PORT` | `3099` | HTTP port for `/agent` |
+| `AGENT_WORKING_DIR` | Server process cwd | Agent workspace root. Commands run here, and file APIs use this same directory by default. |
+| `AGENT_FILES_DIR` | `AGENT_WORKING_DIR` | Optional separate root for file APIs. Set this only when you intentionally want managed files isolated from the command cwd. |
 | `AGENT_TOKEN_FILE` | `.agent-token` | File used to persist long-lived auth tokens |
 | `AGENT_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated CORS allowlist |
 | `AGENT_SHELL` | Windows: `%ComSpec%`; other platforms: Node default | Shell used to execute commands. Set to `powershell.exe` or `pwsh.exe` when you want PowerShell syntax. |
@@ -162,7 +180,7 @@ vertex-agent/
   workspace/
 ```
 
-Agent Node files live under `.vertex-agent/` in the server process working directory.
+Agent Node commands and file APIs use the same workspace root: `AGENT_WORKING_DIR`. Set `AGENT_FILES_DIR` only if you want file APIs to use a different root.
 
 ## Development Notes
 
