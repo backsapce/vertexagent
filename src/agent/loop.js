@@ -31,7 +31,7 @@ import { assembleApiMessages } from './context.js';
 import { loadMemory } from './memory.js';
 import { buildSkillsSection } from './skills.js';
 import { readAgentAgentsFile } from '../vfs/opfs.js';
-import { getWorkspaceDirName } from '../agents/agents.js';
+import { getAgent, getWorkspaceDirName } from '../agents/agents.js';
 
 const DEFAULT_MAX_ROUNDS = 10;
 
@@ -50,6 +50,7 @@ const DEFAULT_MAX_ROUNDS = 10;
  * @param {string} [opts.model] - Model id for accurate context window lookup
  * @param {number} [opts.contextWindow] - Persisted model context window from profile metadata
  * @param {string} [opts.llmProfileId] - LLM profile id to use for this run
+ * @param {number} [opts.subAgentDepth] - Internal guard for delegated agent runs
  * @returns {Promise<{ content: string, thinking: string, toolCalls: Array }>}
  */
 export async function runAgentLoop(opts) {
@@ -61,10 +62,12 @@ export async function runAgentLoop(opts) {
     onUpdate = () => {},
     signal = null,
     maxRounds = DEFAULT_MAX_ROUNDS,
+    subAgentDepth = 0,
   } = opts;
 
   // Resolve workspace directory name from agent's current display name
   const workspaceDirName = agentId ? await getWorkspaceDirName(agentId) : null;
+  const activeAgent = agentId ? await getAgent(agentId) : null;
 
   // Load memory snapshot (frozen for this session)
   const memorySnapshot = await loadMemory(agentId);
@@ -97,7 +100,12 @@ export async function runAgentLoop(opts) {
     });
 
   // Get tool schemas (filter by availability)
-  const toolSchemas = getAvailableToolSchemas(agentUrl, agentId);
+  const toolSchemas = getAvailableToolSchemas({
+    agentUrl,
+    agentId,
+    llmProfileId: opts.llmProfileId,
+    subAgentDepth,
+  });
 
   for (let round = 0; round <= maxRounds; round++) {
     // Stream LLM response
@@ -125,7 +133,12 @@ export async function runAgentLoop(opts) {
 
     // Record tool calls by id (deduplicate)
     for (const tc of toolCalls) {
-      allToolCalls[tc.id] = { id: tc.id, name: tc.name, status: 'running' };
+      allToolCalls[tc.id] = {
+        id: tc.id,
+        name: tc.name,
+        status: 'running',
+        summary: formatToolCallSummary(tc),
+      };
     }
 
     // Execute tool calls and build results
@@ -135,7 +148,14 @@ export async function runAgentLoop(opts) {
         const result = await registry.dispatch(tc.name, tc.parsedArgs, {
           agentUrl,
           agentId,
-          agentName: workspaceDirName,
+          agentName: activeAgent?.name || workspaceDirName,
+          agentWorkspace: workspaceDirName,
+          llmProfileId: opts.llmProfileId,
+          provider: opts.provider,
+          model: opts.model,
+          contextWindow: opts.contextWindow,
+          subAgentDepth,
+          signal,
         });
         const resultStr = String(result);
         toolResults.push({
@@ -148,6 +168,7 @@ export async function runAgentLoop(opts) {
         if (allToolCalls[tc.id]) {
           allToolCalls[tc.id].status = 'completed';
           allToolCalls[tc.id].result = resultStr;
+          allToolCalls[tc.id].summary = formatToolCallSummary(tc, resultStr);
         }
       } catch (err) {
         const errStr = `Error: ${err.message}`;
@@ -160,6 +181,7 @@ export async function runAgentLoop(opts) {
         if (allToolCalls[tc.id]) {
           allToolCalls[tc.id].status = 'error';
           allToolCalls[tc.id].result = errStr;
+          allToolCalls[tc.id].summary = formatToolCallSummary(tc);
         }
       }
     }
@@ -328,8 +350,33 @@ function finalizeToolCalls(fragments) {
 /**
  * Get available tool schemas filtered by availability.
  */
-function getAvailableToolSchemas(agentUrl, agentId) {
-  return getEnabledToolSchemas({ agentUrl, agentId });
+function getAvailableToolSchemas(context) {
+  return getEnabledToolSchemas(context);
+}
+
+function formatToolCallSummary(toolCall, result = '') {
+  if (toolCall.name !== 'spawn_agent') return undefined;
+
+  const completedAgents = [];
+  const matches = String(result).matchAll(/(?:Sub-agent|Agent)\s+(.+?)\s+\((agent-[^)]+)\)\s+completed/g);
+  for (const match of matches) {
+    completedAgents.push(`${match[1]} (${match[2]})`);
+  }
+  if (completedAgents.length > 0) return completedAgents.join(', ');
+
+  const args = toolCall.parsedArgs || {};
+  const taskTargets = Array.isArray(args.tasks) && args.tasks.length > 0
+    ? args.tasks
+    : [args];
+
+  const targets = taskTargets.map((task, index) => {
+    if (task.agent_id && task.agent_name) return `${task.agent_name} (${task.agent_id})`;
+    if (task.agent_id) return task.agent_id;
+    if (task.agent_name) return task.agent_name;
+    return taskTargets.length > 1 ? `current agent task ${index + 1}` : 'current agent';
+  });
+
+  return targets.join(', ');
 }
 
 // Map app provider IDs to tokenlens provider prefixes

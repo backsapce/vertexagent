@@ -48,10 +48,11 @@ function sortSessions(sessions) {
   return [...sessions].sort((a, b) => sessionTimestamp(b) - sessionTimestamp(a));
 }
 
-const AGENT_SYSTEM_PROMPT = `You are a helpful assistant with access to tools for executing commands, reading/writing files, and managing the filesystem. Use these tools to help the user accomplish their tasks.
+const AGENT_SYSTEM_PROMPT = `You are a helpful assistant with access to tools for executing commands, reading/writing files, managing the filesystem, and delegating focused tasks to sub-agents. Use these tools to help the user accomplish their tasks.
 
 Rules:
 - Always explain what you're doing before and after using tools.
+- Spawn a sub-agent only for a bounded task that can be handled independently.
 - Be careful with destructive operations — confirm with the user first.
 - If a tool fails, explain the error and suggest alternatives.`;
 
@@ -486,10 +487,13 @@ function App() {
             for (const tc of tcList) {
               const existing = toolCalls.find((t) => t.id === tc.id);
               if (!existing) {
-                toolCalls.push({ id: tc.id, name: tc.name, status: tc.status, result: tc.result });
+                toolCalls.push({ id: tc.id, name: tc.name, status: tc.status, result: tc.result, summary: tc.summary });
               } else if (tc.result !== undefined) {
                 existing.status = tc.status;
                 existing.result = tc.result;
+                existing.summary = tc.summary;
+              } else if (tc.summary !== undefined) {
+                existing.summary = tc.summary;
               }
             }
           }
@@ -505,6 +509,9 @@ function App() {
       const finalContent = result.content || streamingContentRef.current;
       const finalThinking = result.thinking || streamingThinkingRef.current;
       updateMessage({ content: finalContent, thinking: finalThinking, toolCalls: [...toolCalls], usage: result.usage });
+      if (result.toolCalls?.some((tc) => tc.name === 'spawn_agent')) {
+        setAgentList(await listAgents());
+      }
     } catch (err) {
       if (err.name !== 'AbortError') {
         const errorContent = streamingContentRef.current || `Error: ${err.message}`;

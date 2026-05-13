@@ -15,6 +15,7 @@ import { createSkill, deleteSkill, getSkill, listSkills, updateSkill } from './s
 import { executeCommand, listFiles, readFileText, writeFile } from '../models/agent';
 import { listAgentFiles, loadFiles, readAgentFile, readFileContent, writeAgentFile } from '../vfs/opfs';
 import config from '../config/config';
+import { getAgent, listAgents, updateAgentConfig } from '../agents/agents.js';
 
 // ─── Registry singleton ─────────────────────────────────────────────────────
 
@@ -505,6 +506,85 @@ registry.register({
   },
 });
 
+registry.register({
+  name: 'spawn_agent',
+  schema: {
+    description:
+      'Run one or more focused tasks through an existing agent workspace and return their results. If no agent_id or agent_name is provided, run as the current/default agent. This tool cannot create new agents. For multiple related tasks, send them in one call with shared_context so requests share the same prompt prefix for better provider cache hits.',
+    parameters: {
+      type: 'object',
+      properties: {
+        task: {
+          type: 'string',
+          description: 'The complete task for one delegated agent run. Use either task or tasks.',
+        },
+        tasks: {
+          type: 'array',
+          description: 'Multiple independent tasks to run through agent workspaces. Use this instead of repeated spawn_agent calls when tasks share context.',
+          items: {
+            type: 'object',
+            properties: {
+              task: {
+                type: 'string',
+                description: 'The complete task for this delegated agent run.',
+              },
+              agent_id: {
+                type: 'string',
+                description: 'Optional existing agent ID to run this task as.',
+              },
+              agent_name: {
+                type: 'string',
+                description: 'Optional existing agent display name to run this task as when agent_id is not provided.',
+              },
+            },
+            required: ['task'],
+            additionalProperties: false,
+          },
+          minItems: 1,
+          maxItems: 4,
+        },
+        shared_context: {
+          type: 'string',
+          description: 'Optional context prepended identically to every task. Put common repo notes, constraints, and file paths here to improve prompt-cache hits.',
+        },
+        agent_id: {
+          type: 'string',
+          description: 'Optional existing agent ID to run as. If omitted with agent_name, the current/default agent is used.',
+        },
+        agent_name: {
+          type: 'string',
+          description: 'Optional existing agent display name to run as when agent_id is not provided.',
+        },
+        max_rounds: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 6,
+          description: 'Maximum tool-use rounds for the delegated agent run. Defaults to 4.',
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  checkAvailable: (ctx) => !!ctx?.agentId && !!ctx?.llmProfileId && (ctx?.subAgentDepth || 0) < 1,
+  async handler({ task, tasks, shared_context: sharedContext = '', agent_id: agentId, agent_name: agentName, max_rounds: maxRounds = 4 }, ctx) {
+    try {
+      const requestedTasks = normalizeSpawnTasks({ task, tasks, agentId, agentName });
+      if (requestedTasks.length === 0) {
+        return 'Error running delegated agent task: provide task or tasks.';
+      }
+      const boundedRounds = Math.min(Math.max(Number(maxRounds) || 4, 1), 6);
+      const results = await Promise.all(
+        requestedTasks.map((item, index) => runSpawnedAgent(item, index, requestedTasks.length, sharedContext, boundedRounds, ctx))
+      );
+
+      return results.join('\n\n---\n\n');
+    } catch (err) {
+      return `Error running delegated agent task: ${err.message}`;
+    }
+  },
+});
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Format a file tree result as a readable string. */
@@ -524,4 +604,94 @@ function formatFileTree(node, depth = 0) {
       return line;
     })
     .join('\n');
+}
+
+const SUB_AGENT_SYSTEM_PROMPT = `You are a delegated VertexAgent agent run.
+
+Work on the assigned task independently and return a concise final report with:
+- What you did or found
+- Files you changed, if any
+- Any blockers, risks, or follow-up needed
+
+Use the selected workspace and memory. Use tools when they materially help. Do not ask the user questions; if something is ambiguous, make a conservative assumption and state it.`;
+
+function normalizeSpawnTasks({ task, tasks, agentId, agentName }) {
+  if (Array.isArray(tasks) && tasks.length > 0) {
+    return tasks
+      .slice(0, 4)
+      .filter((item) => item?.task?.trim())
+      .map((item) => ({
+        task: item.task.trim(),
+        agentId: item.agent_id || null,
+        agentName: item.agent_name?.trim() || null,
+      }));
+  }
+  if (!task?.trim()) return [];
+  return [{
+    task: task.trim(),
+    agentId: agentId || null,
+    agentName: agentName?.trim() || null,
+  }];
+}
+
+async function runSpawnedAgent(item, index, total, sharedContext, maxRounds, ctx) {
+  const { runAgentLoop } = await import('./loop.js');
+
+  let subAgent = null;
+
+  if (item.agentId) {
+    subAgent = await getAgent(item.agentId);
+    if (!subAgent) throw new Error(`Agent not found: ${item.agentId}`);
+  } else if (item.agentName) {
+    const agents = await listAgents();
+    subAgent = agents.find((agent) => agent.name === item.agentName) || null;
+    if (!subAgent) throw new Error(`Agent not found: ${item.agentName}`);
+  } else {
+    subAgent = await getAgent(ctx.agentId);
+    if (!subAgent) throw new Error(`Current agent not found: ${ctx.agentId}`);
+  }
+
+  await updateAgentConfig(subAgent.id, {
+    llmProfileId: ctx.llmProfileId,
+    sandboxUrl: ctx.agentUrl || null,
+  });
+
+  const messages = buildSubAgentMessages(sharedContext, item.task, index, total);
+  const result = await runAgentLoop({
+    messages,
+    systemPrompt: SUB_AGENT_SYSTEM_PROMPT,
+    agentUrl: ctx.agentUrl || null,
+    agentId: subAgent.id,
+    llmProfileId: ctx.llmProfileId,
+    provider: ctx.provider,
+    model: ctx.model,
+    contextWindow: ctx.contextWindow,
+    signal: ctx.signal,
+    maxRounds,
+    subAgentDepth: (ctx.subAgentDepth || 0) + 1,
+  });
+
+  const toolSummary = result.toolCalls?.length
+    ? `\n\nAgent tool calls:\n${result.toolCalls.map((tc) => `- ${tc.name}: ${tc.status}`).join('\n')}`
+    : '';
+
+  return `Agent ${subAgent.name} (${subAgent.id}) completed.\n\n${result.content || '(no final content)'}${toolSummary}`;
+}
+
+function buildSubAgentMessages(sharedContext, task, index, total) {
+  const messages = [];
+  const trimmedContext = sharedContext?.trim();
+  if (trimmedContext) {
+    messages.push({
+      role: 'user',
+      content: `Shared context for all delegated agent tasks:\n${trimmedContext}`,
+    });
+  }
+  messages.push({
+    role: 'user',
+    content: total > 1
+      ? `Delegated agent task ${index + 1} of ${total}:\n${task}`
+      : task,
+  });
+  return messages;
 }

@@ -256,13 +256,14 @@ const ToolBlock = ({ toolCall }) => {
     );
   }
 
-  // New tool call format: { name, status?, result? }
-  const { name, status, result } = toolCall;
+  // New tool call format: { name, status?, result?, summary? }
+  const { name, status, result, summary } = toolCall;
   return (
     <div className="tool-block">
       <div className="tool-header" onClick={() => setExpanded((v) => !v)}>
         <ChevronRight className={expanded ? 'expanded' : ''} width={14} height={14} />
         <span className="tool-label">{name}</span>
+        {summary && <span className="tool-summary">{summary}</span>}
         {status === 'running' && <span className="tool-exit-code">{t('message.running')}</span>}
         {status === 'completed' && <span className="tool-exit-code success">{t('message.completed')}</span>}
         {status === 'error' && <span className="tool-exit-code error">{t('message.error')}</span>}

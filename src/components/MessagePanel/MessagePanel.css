@@ -688,9 +688,19 @@
 .tool-label {
   font-weight: 500;
   color: var(--color-text-secondary);
+  flex-shrink: 0;
 }
 
 .tool-cmd {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--color-text-content);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-summary {
+  min-width: 0;
   font-family: 'SF Mono', 'Fira Code', monospace;
   color: var(--color-text-content);
   overflow: hidden;
